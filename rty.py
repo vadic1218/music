@@ -86,6 +86,7 @@ user_search_history = {}
 user_files_state = {}
 ym_client_lock = threading.Lock()
 yandex_cache_index_lock = threading.RLock()
+chat_library_index_lock = threading.RLock()
 liked_sync_state_lock = threading.Lock()
 active_liked_sync_users = set()
 
@@ -100,6 +101,7 @@ os.makedirs(PODCASTS_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
 YANDEX_CACHE_INDEX_PATH = Path(DATA_DIR) / "yandex_cache_index.json"
+YANDEX_CHAT_LIBRARY_INDEX_PATH = Path(DATA_DIR) / "yandex_chat_library_index.json"
 
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
@@ -204,6 +206,72 @@ def remove_yandex_cache_entry(track_id, album_id, delete_file=False):
                 print(f"[Yandex Cache] Failed to delete cached file {file_path}: {e}")
 
 
+def load_chat_library_index():
+    with chat_library_index_lock:
+        try:
+            if not YANDEX_CHAT_LIBRARY_INDEX_PATH.exists():
+                return {}
+
+            raw_data = json.loads(YANDEX_CHAT_LIBRARY_INDEX_PATH.read_text(encoding="utf-8"))
+            return raw_data if isinstance(raw_data, dict) else {}
+        except Exception as e:
+            print(f"[Chat Library] Failed to load chat library index: {e}")
+            return {}
+
+
+def save_chat_library_index(index_data):
+    with chat_library_index_lock:
+        payload = json.dumps(index_data, ensure_ascii=False, indent=2)
+        try:
+            temp_path = YANDEX_CHAT_LIBRARY_INDEX_PATH.with_suffix(".tmp")
+            temp_path.write_text(payload, encoding="utf-8")
+            temp_path.replace(YANDEX_CHAT_LIBRARY_INDEX_PATH)
+        except Exception as e:
+            try:
+                YANDEX_CHAT_LIBRARY_INDEX_PATH.write_text(payload, encoding="utf-8")
+            except Exception as fallback_error:
+                print(f"[Chat Library] Failed to save chat library index: {e}; fallback failed: {fallback_error}")
+
+
+def get_chat_library_tracks(chat_id):
+    index_data = load_chat_library_index()
+    return index_data.setdefault(str(chat_id), {})
+
+
+def update_chat_library_track(chat_id, track_key, message_id, title, performer):
+    index_data = load_chat_library_index()
+    chat_tracks = index_data.setdefault(str(chat_id), {})
+    chat_tracks[track_key] = {
+        "message_id": int(message_id),
+        "title": title,
+        "performer": performer,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_chat_library_index(index_data)
+
+
+def remove_chat_library_track(chat_id, track_key):
+    index_data = load_chat_library_index()
+    chat_tracks = index_data.setdefault(str(chat_id), {})
+    item = chat_tracks.pop(track_key, None)
+    save_chat_library_index(index_data)
+    return item
+
+
+def send_track_to_chat_library(chat_id, audio_path, title, performer):
+    with open(audio_path, 'rb') as audio_file:
+        bot.send_chat_action(chat_id, 'upload_audio')
+        message = bot.send_audio(
+            chat_id=chat_id,
+            audio=audio_file,
+            title=title[:64] if title else None,
+            performer=performer[:64] if performer else None,
+            caption=f"🎵 {title}",
+            timeout=300
+        )
+    return message.message_id
+
+
 def get_yandex_liked_tracks():
     if not ym_client:
         return [], "Клиент Яндекс.Музыки не настроен."
@@ -223,7 +291,7 @@ def get_yandex_liked_tracks():
         return [], str(e)
 
 
-def sync_yandex_liked_tracks(progress_callback=None):
+def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
     tracks, error = get_yandex_liked_tracks()
     if error:
         return {
@@ -232,20 +300,37 @@ def sync_yandex_liked_tracks(progress_callback=None):
         }
 
     total_tracks = len(tracks)
-    print(f"[Yandex Likes] Sync started: total={total_tracks}")
+    print(f"[Yandex Likes] Sync started: total={total_tracks}, chat_id={chat_id}")
     if progress_callback:
-        progress_callback("start", total=total_tracks, processed=0, downloaded=0, reused=0, failed=0, removed=0)
+        progress_callback(
+            "start",
+            total=total_tracks,
+            processed=0,
+            downloaded=0,
+            reused=0,
+            failed=0,
+            removed=0,
+            sent_to_chat=0,
+            already_in_chat=0,
+            removed_from_chat=0,
+        )
 
     current_keys = set()
     downloaded = 0
     reused = 0
     failed = []
+    sent_to_chat = 0
+    already_in_chat = 0
+    removed_from_chat = 0
+    chat_library_tracks = get_chat_library_tracks(chat_id) if chat_id is not None else {}
 
     for index, track in enumerate(tracks, start=1):
         try:
             album_id = track.albums[0].id if track.albums else 0
             cache_key = make_yandex_cache_key(track.id, album_id)
             current_keys.add(cache_key)
+            performer = ", ".join(a.name for a in track.artists) if track.artists else "Unknown Artist"
+            duration_seconds = (track.duration_ms or 0) / 1000 if hasattr(track, "duration_ms") else 0
 
             cached_path, cache_item = resolve_cached_yandex_track(track.id, album_id)
             if cached_path:
@@ -254,28 +339,37 @@ def sync_yandex_liked_tracks(progress_callback=None):
                     album_id,
                     cached_path,
                     track.title,
-                    ", ".join(a.name for a in track.artists) if track.artists else "Unknown Artist",
-                    (track.duration_ms or 0) / 1000 if hasattr(track, "duration_ms") else 0,
+                    performer,
+                    duration_seconds,
                     liked_synced=True
                 )
+                audio_path = cached_path
+                title = track.title
                 reused += 1
-                if progress_callback and (index == 1 or index % 10 == 0 or index == total_tracks):
-                    progress_callback(
-                        "progress",
-                        total=total_tracks,
-                        processed=index,
-                        downloaded=downloaded,
-                        reused=reused,
-                        failed=len(failed),
-                        removed=0
-                    )
-                continue
-
-            audio_path, title, performer, status = download_yandex_track_fast(track.id, album_id, liked_synced=True)
-            if status == "success" and audio_path:
-                downloaded += 1
             else:
-                failed.append(f"{track.title}: {status}")
+                audio_path, title, performer, status = download_yandex_track_fast(track.id, album_id, liked_synced=True)
+                if status == "success" and audio_path:
+                    downloaded += 1
+                else:
+                    failed.append(f"{track.title}: {status}")
+                    audio_path = None
+
+            if audio_path and chat_id is not None:
+                existing_chat_item = chat_library_tracks.get(cache_key)
+                if existing_chat_item and existing_chat_item.get("message_id"):
+                    already_in_chat += 1
+                else:
+                    try:
+                        message_id = send_track_to_chat_library(chat_id, audio_path, title, performer)
+                        update_chat_library_track(chat_id, cache_key, message_id, title, performer)
+                        chat_library_tracks[cache_key] = {
+                            "message_id": message_id,
+                            "title": title,
+                            "performer": performer,
+                        }
+                        sent_to_chat += 1
+                    except Exception as e:
+                        failed.append(f"{track.title}: не удалось сохранить в чат ({e})")
         except Exception as e:
             failed.append(f"{getattr(track, 'title', 'Unknown track')}: {e}")
 
@@ -287,7 +381,10 @@ def sync_yandex_liked_tracks(progress_callback=None):
                 downloaded=downloaded,
                 reused=reused,
                 failed=len(failed),
-                removed=0
+                removed=0,
+                sent_to_chat=sent_to_chat,
+                already_in_chat=already_in_chat,
+                removed_from_chat=0,
             )
 
     index_data = load_yandex_cache_index()
@@ -300,9 +397,22 @@ def sync_yandex_liked_tracks(progress_callback=None):
         remove_yandex_cache_entry(item["track_id"], item.get("album_id", 0), delete_file=True)
         removed += 1
 
+    if chat_id is not None:
+        for track_key, item in list(get_chat_library_tracks(chat_id).items()):
+            if track_key in current_keys:
+                continue
+            removed_item = remove_chat_library_track(chat_id, track_key)
+            if removed_item and removed_item.get("message_id"):
+                try:
+                    bot.delete_message(chat_id, removed_item["message_id"])
+                    removed_from_chat += 1
+                except Exception as e:
+                    print(f"[Chat Library] Failed to delete message {removed_item['message_id']}: {e}")
+
     print(
         f"[Yandex Likes] Sync completed: total={total_tracks}, "
-        f"downloaded={downloaded}, reused={reused}, removed={removed}, failed={len(failed)}"
+        f"downloaded={downloaded}, reused={reused}, removed={removed}, failed={len(failed)}, "
+        f"sent_to_chat={sent_to_chat}, already_in_chat={already_in_chat}, removed_from_chat={removed_from_chat}"
     )
     if progress_callback:
         progress_callback(
@@ -312,15 +422,21 @@ def sync_yandex_liked_tracks(progress_callback=None):
             downloaded=downloaded,
             reused=reused,
             failed=len(failed),
-            removed=removed
+            removed=removed,
+            sent_to_chat=sent_to_chat,
+            already_in_chat=already_in_chat,
+            removed_from_chat=removed_from_chat,
         )
 
     summary = (
         f"Синхронизация завершена.\n"
         f"Лайков найдено: {total_tracks}\n"
         f"Новых скачано: {downloaded}\n"
-        f"Переиспользовано из кэша: {reused}\n"
-        f"Удалено из бота: {removed}"
+        f"Уже сохранено локально: {reused}\n"
+        f"Сохранено в чат: {sent_to_chat}\n"
+        f"Уже было в чате: {already_in_chat}\n"
+        f"Удалено локально: {removed}\n"
+        f"Удалено из чата: {removed_from_chat}"
     )
     if failed:
         summary += f"\nОшибок: {len(failed)}"
@@ -333,6 +449,9 @@ def sync_yandex_liked_tracks(progress_callback=None):
         "removed": removed,
         "failed": failed,
         "tracks": tracks,
+        "sent_to_chat": sent_to_chat,
+        "already_in_chat": already_in_chat,
+        "removed_from_chat": removed_from_chat,
     }
 
 
@@ -347,8 +466,11 @@ def format_liked_sync_result(sync_result):
         "✅ *Раздел «Мне понравилось» синхронизирован*\n\n"
         f"• Всего лайков: {len(tracks)}\n"
         f"• Новых скачано: {sync_result['downloaded']}\n"
-        f"• Уже было в кэше: {sync_result['reused']}\n"
-        f"• Удалено из бота: {sync_result['removed']}"
+        f"• Уже сохранено локально: {sync_result['reused']}\n"
+        f"• Сохранено в чат: {sync_result.get('sent_to_chat', 0)}\n"
+        f"• Уже было в чате: {sync_result.get('already_in_chat', 0)}\n"
+        f"• Удалено локально: {sync_result['removed']}\n"
+        f"• Удалено из чата: {sync_result.get('removed_from_chat', 0)}"
     )
 
     if preview_lines:
@@ -360,14 +482,17 @@ def format_liked_sync_result(sync_result):
     return response_text
 
 
-def format_liked_sync_progress(total, processed, downloaded, reused, failed, removed=0):
+def format_liked_sync_progress(total, processed, downloaded, reused, failed, removed=0, sent_to_chat=0, already_in_chat=0, removed_from_chat=0):
     return (
         "🎵 *Синхронизирую треки из раздела «Мне понравилось»...*\n\n"
         f"• Обработано: {processed}/{total}\n"
         f"• Новых скачано: {downloaded}\n"
-        f"• Уже было в кэше: {reused}\n"
+        f"• Уже сохранено локально: {reused}\n"
+        f"• Сохранено в чат: {sent_to_chat}\n"
+        f"• Уже было в чате: {already_in_chat}\n"
         f"• Ошибок: {failed}\n"
-        f"• Удалено из бота: {removed}"
+        f"• Удалено локально: {removed}\n"
+        f"• Удалено из чата: {removed_from_chat}"
     )
 
 
@@ -378,19 +503,30 @@ def finish_liked_sync(user_id):
 
 def run_liked_sync(chat_id, user_id, wait_message_id):
     try:
-        def progress_callback(stage, total, processed, downloaded, reused, failed, removed):
+        def progress_callback(stage, total, processed, downloaded, reused, failed, removed, sent_to_chat, already_in_chat, removed_from_chat):
             print(
                 f"[Yandex Likes] stage={stage} processed={processed}/{total} "
-                f"downloaded={downloaded} reused={reused} failed={failed} removed={removed}"
+                f"downloaded={downloaded} reused={reused} failed={failed} removed={removed} "
+                f"sent_to_chat={sent_to_chat} already_in_chat={already_in_chat} removed_from_chat={removed_from_chat}"
             )
             safe_edit_message_text(
-                format_liked_sync_progress(total, processed, downloaded, reused, failed, removed),
+                format_liked_sync_progress(
+                    total,
+                    processed,
+                    downloaded,
+                    reused,
+                    failed,
+                    removed,
+                    sent_to_chat,
+                    already_in_chat,
+                    removed_from_chat
+                ),
                 chat_id=chat_id,
                 message_id=wait_message_id,
                 parse_mode='Markdown'
             )
 
-        sync_result = sync_yandex_liked_tracks(progress_callback=progress_callback)
+        sync_result = sync_yandex_liked_tracks(chat_id=chat_id, progress_callback=progress_callback)
         if not sync_result["success"]:
             safe_edit_message_text(
                 f"❌ *Не удалось синхронизировать лайки*\n\n{escape_markdown(sync_result['message'])}",
