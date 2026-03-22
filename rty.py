@@ -166,6 +166,24 @@ def build_main_menu_keyboard():
     return keyboard
 
 
+def is_menu_button_text(text):
+    if not text:
+        return False
+
+    normalized_text = text.strip()
+    menu_labels = [
+        'Мне понравилось',
+        'Поиск музыки',
+        'YouTube',
+        'Музыка',
+        'Подкасты',
+        'Очистить кэш',
+        'Подписка',
+        'Помощь',
+    ]
+    return any(label in normalized_text for label in menu_labels)
+
+
 def check_access(user_id):
     """Checks whether the user has an active subscription."""
     has_access, message = database.check_subscription(user_id)
@@ -1855,7 +1873,7 @@ def handle_menu_command(message):
     )
 
 
-@bot.message_handler(func=lambda message: bool(message.text))
+@bot.message_handler(func=lambda message: is_menu_button_text(message.text))
 def handle_menu_buttons_fallback(message):
     normalized_text = message.text.strip()
 
