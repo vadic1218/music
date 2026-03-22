@@ -7,7 +7,7 @@
 # Импорт библиотек
 import database
 from pathlib import Path
-from config import BOT_TOKEN, ADMIN_IDS, MAX_FILE_SIZE_MB, FFMPEG_THREADS, YANDEX_MUSIC_TOKEN
+from config import BOT_TOKEN, ADMIN_IDS, MAX_FILE_SIZE_MB, FFMPEG_THREADS, YANDEX_MUSIC_TOKEN, CACHE_DIR
 import telebot
 import os
 import sys
@@ -87,7 +87,7 @@ user_files_state = {}
 ym_client_lock = threading.Lock()
 
 # --- НАСТРОЙКИ ПАПОК ---
-AUDIO_CACHE_DIR = str(BASE_DIR / "audio_cache")
+AUDIO_CACHE_DIR = str(CACHE_DIR)
 MUSIC_DIR = os.path.join(AUDIO_CACHE_DIR, "music")
 PODCASTS_DIR = os.path.join(AUDIO_CACHE_DIR, "podcasts")
 

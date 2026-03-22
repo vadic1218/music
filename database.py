@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, Any, List
-from config import DEFAULT_PROMO_CODES, SUBSCRIPTION_LIMITS, ADMIN_IDS
+from config import DEFAULT_PROMO_CODES, SUBSCRIPTION_LIMITS, ADMIN_IDS, DATABASE_PATH
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -17,7 +17,8 @@ if hasattr(sys.stderr, "reconfigure"):
 
 
 class Database:
-    def __init__(self, db_path='data/music_bot.db'):
+    def __init__(self, db_path=None):
+        db_path = db_path or DATABASE_PATH
         self.db_path = str(Path(db_path)) if os.path.isabs(db_path) else str(BASE_DIR / db_path)
         self.legacy_db_path = str(BASE_DIR / 'music_bot.db')
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)

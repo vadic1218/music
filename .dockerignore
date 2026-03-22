@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+*.db
+*.sqlite3
+audio_cache
+data
+bot_start*.log
+logs
+.sqlite_recovery
+tmp_*.db
+tmp_*.journal
