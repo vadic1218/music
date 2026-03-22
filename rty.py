@@ -1259,6 +1259,7 @@ def send_welcome(message):
         user_id = message.from_user.id
         username = message.from_user.username
         first_name = message.from_user.first_name
+        safe_first_name = escape_markdown(first_name or '????')
 
         # Добавляем пользователя в базу
         database.add_user(
@@ -1328,6 +1329,8 @@ def send_welcome(message):
                 "🚀 *Начните с поиска музыки!*"
             )
 
+        if first_name:
+            welcome_text = welcome_text.replace(first_name, safe_first_name, 1)
         bot.reply_to(message, welcome_text, parse_mode='Markdown',
                      disable_web_page_preview=True, reply_markup=keyboard)
 
