@@ -37,6 +37,7 @@ venv.bak/
 
 # Audio cache
 audio_cache/
+data/
 *.mp3
 *.webm
 *.m4a

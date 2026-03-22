@@ -27,7 +27,7 @@ import subprocess
 import math
 from telebot import types
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # --- НАСТРОЙКА БОТА ---
 BASE_DIR = Path(__file__).resolve().parent
@@ -85,6 +85,9 @@ if YM_TOKEN:
 user_search_history = {}
 user_files_state = {}
 ym_client_lock = threading.Lock()
+yandex_cache_index_lock = threading.RLock()
+liked_sync_state_lock = threading.Lock()
+active_liked_sync_users = set()
 
 # --- НАСТРОЙКИ ПАПОК ---
 AUDIO_CACHE_DIR = str(CACHE_DIR)
@@ -127,28 +130,30 @@ def make_yandex_cache_key(track_id, album_id):
 
 
 def load_yandex_cache_index():
-    try:
-        if not YANDEX_CACHE_INDEX_PATH.exists():
-            return {}
+    with yandex_cache_index_lock:
+        try:
+            if not YANDEX_CACHE_INDEX_PATH.exists():
+                return {}
 
-        raw_data = json.loads(YANDEX_CACHE_INDEX_PATH.read_text(encoding="utf-8"))
-        return raw_data if isinstance(raw_data, dict) else {}
-    except Exception as e:
-        print(f"[Yandex Cache] Failed to load cache index: {e}")
-        return {}
+            raw_data = json.loads(YANDEX_CACHE_INDEX_PATH.read_text(encoding="utf-8"))
+            return raw_data if isinstance(raw_data, dict) else {}
+        except Exception as e:
+            print(f"[Yandex Cache] Failed to load cache index: {e}")
+            return {}
 
 
 def save_yandex_cache_index(index_data):
-    payload = json.dumps(index_data, ensure_ascii=False, indent=2)
-    try:
-        temp_path = YANDEX_CACHE_INDEX_PATH.with_suffix(".tmp")
-        temp_path.write_text(payload, encoding="utf-8")
-        temp_path.replace(YANDEX_CACHE_INDEX_PATH)
-    except Exception as e:
+    with yandex_cache_index_lock:
+        payload = json.dumps(index_data, ensure_ascii=False, indent=2)
         try:
-            YANDEX_CACHE_INDEX_PATH.write_text(payload, encoding="utf-8")
-        except Exception as fallback_error:
-            print(f"[Yandex Cache] Failed to save cache index: {e}; fallback failed: {fallback_error}")
+            temp_path = YANDEX_CACHE_INDEX_PATH.with_suffix(".tmp")
+            temp_path.write_text(payload, encoding="utf-8")
+            temp_path.replace(YANDEX_CACHE_INDEX_PATH)
+        except Exception as e:
+            try:
+                YANDEX_CACHE_INDEX_PATH.write_text(payload, encoding="utf-8")
+            except Exception as fallback_error:
+                print(f"[Yandex Cache] Failed to save cache index: {e}; fallback failed: {fallback_error}")
 
 
 def resolve_cached_yandex_track(track_id, album_id):
@@ -179,7 +184,7 @@ def update_yandex_cache_entry(track_id, album_id, file_path, title, performer, d
         "performer": performer,
         "duration_seconds": duration_seconds or 0,
         "liked_synced": bool(liked_synced),
-        "updated_at": datetime.utcnow().isoformat()
+        "updated_at": datetime.now(timezone.utc).isoformat()
     }
     save_yandex_cache_index(index_data)
 
@@ -288,6 +293,69 @@ def sync_yandex_liked_tracks():
         "failed": failed,
         "tracks": tracks,
     }
+
+
+def format_liked_sync_result(sync_result):
+    tracks = sync_result.get("tracks", [])
+    preview_lines = []
+    for track in tracks[:10]:
+        artist_names = ", ".join(a.name for a in track.artists) if getattr(track, "artists", None) else "Unknown Artist"
+        preview_lines.append(f"• {escape_markdown(artist_names)} - {escape_markdown(track.title)}")
+
+    response_text = (
+        "✅ *Раздел «Мне понравилось» синхронизирован*\n\n"
+        f"• Всего лайков: {len(tracks)}\n"
+        f"• Новых скачано: {sync_result['downloaded']}\n"
+        f"• Уже было в кэше: {sync_result['reused']}\n"
+        f"• Удалено из бота: {sync_result['removed']}"
+    )
+
+    if preview_lines:
+        response_text += "\n\n*Первые треки:*\n" + "\n".join(preview_lines)
+
+    if sync_result.get("failed"):
+        response_text += f"\n\n⚠️ Ошибок синхронизации: {len(sync_result['failed'])}"
+
+    return response_text
+
+
+def finish_liked_sync(user_id):
+    with liked_sync_state_lock:
+        active_liked_sync_users.discard(user_id)
+
+
+def run_liked_sync(chat_id, user_id, wait_message_id):
+    try:
+        sync_result = sync_yandex_liked_tracks()
+        if not sync_result["success"]:
+            safe_edit_message_text(
+                f"❌ *Не удалось синхронизировать лайки*\n\n{escape_markdown(sync_result['message'])}",
+                chat_id=chat_id,
+                message_id=wait_message_id,
+                parse_mode='Markdown'
+            )
+            return
+
+        safe_edit_message_text(
+            format_liked_sync_result(sync_result),
+            chat_id=chat_id,
+            message_id=wait_message_id,
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(f"[Yandex Likes] Sync failed: {e}")
+        traceback.print_exc()
+        try:
+            safe_edit_message_text(
+                f"❌ *Ошибка синхронизации*\n\n{escape_markdown(str(e)[:300])}",
+                chat_id=chat_id,
+                message_id=wait_message_id,
+                parse_mode='Markdown'
+            )
+        except Exception:
+            pass
+    finally:
+        finish_liked_sync(user_id)
 
 
 def build_admin_contact_button(label="Contact Admin"):
@@ -1981,55 +2049,38 @@ def handle_liked_button(message):
     if not ym_client:
         bot.reply_to(
             message,
-            "❌ Яндекс.Музыка не настроена. Добавьте `YANDEX_MUSIC_TOKEN` и попробуйте снова.",
+            "\u274c \u042f\u043d\u0434\u0435\u043a\u0441.\u041c\u0443\u0437\u044b\u043a\u0430 \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d\u0430. \u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 `YANDEX_MUSIC_TOKEN` \u0438 \u043f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0441\u043d\u043e\u0432\u0430.",
             parse_mode='Markdown'
         )
         return
 
-    wait_msg = bot.reply_to(
-        message,
-        "🎵 *Синхронизирую треки из раздела «Мне понравилось»...*\n\n"
-        "Это может занять некоторое время, если лайков много.",
-        parse_mode='Markdown'
-    )
+    user_id = message.from_user.id
+    with liked_sync_state_lock:
+        if user_id in active_liked_sync_users:
+            bot.reply_to(
+                message,
+                "\u23f3 \u0421\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u044f \u0440\u0430\u0437\u0434\u0435\u043b\u0430 *\u00ab\u041c\u043d\u0435 \u043f\u043e\u043d\u0440\u0430\u0432\u0438\u043b\u043e\u0441\u044c\u00bb* \u0443\u0436\u0435 \u0438\u0434\u0435\u0442. \u0414\u043e\u0436\u0434\u0438\u0442\u0435\u0441\u044c \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u044f \u0442\u0435\u043a\u0443\u0449\u0435\u0439 \u0437\u0430\u0434\u0430\u0447\u0438.",
+                parse_mode='Markdown'
+            )
+            return
+        active_liked_sync_users.add(user_id)
 
-    sync_result = sync_yandex_liked_tracks()
-    if not sync_result["success"]:
-        safe_edit_message_text(
-            f"❌ *Не удалось синхронизировать лайки*\n\n{escape_markdown(sync_result['message'])}",
-            chat_id=message.chat.id,
-            message_id=wait_msg.message_id,
+    try:
+        wait_msg = bot.reply_to(
+            message,
+            "\U0001F3B5 *\u0421\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0438\u0440\u0443\u044e \u0442\u0440\u0435\u043a\u0438 \u0438\u0437 \u0440\u0430\u0437\u0434\u0435\u043b\u0430 \u00ab\u041c\u043d\u0435 \u043f\u043e\u043d\u0440\u0430\u0432\u0438\u043b\u043e\u0441\u044c\u00bb...*\n\n"
+            "\u042d\u0442\u043e \u043c\u043e\u0436\u0435\u0442 \u0437\u0430\u043d\u044f\u0442\u044c \u043d\u0435\u043a\u043e\u0442\u043e\u0440\u043e\u0435 \u0432\u0440\u0435\u043c\u044f, \u0435\u0441\u043b\u0438 \u043b\u0430\u0439\u043a\u043e\u0432 \u043c\u043d\u043e\u0433\u043e.",
             parse_mode='Markdown'
         )
-        return
+    except Exception:
+        finish_liked_sync(user_id)
+        raise
 
-    tracks = sync_result.get("tracks", [])
-    preview_lines = []
-    for track in tracks[:10]:
-        artist_names = ", ".join(a.name for a in track.artists) if getattr(track, "artists", None) else "Unknown Artist"
-        preview_lines.append(f"• {escape_markdown(artist_names)} - {escape_markdown(track.title)}")
-
-    response_text = (
-        "✅ *Раздел «Мне понравилось» синхронизирован*\n\n"
-        f"• Всего лайков: {len(tracks)}\n"
-        f"• Новых скачано: {sync_result['downloaded']}\n"
-        f"• Уже было в кэше: {sync_result['reused']}\n"
-        f"• Удалено из бота: {sync_result['removed']}"
-    )
-
-    if preview_lines:
-        response_text += "\n\n*Первые треки:*\n" + "\n".join(preview_lines)
-
-    if sync_result.get("failed"):
-        response_text += f"\n\n⚠️ Ошибок синхронизации: {len(sync_result['failed'])}"
-
-    safe_edit_message_text(
-        response_text,
-        chat_id=message.chat.id,
-        message_id=wait_msg.message_id,
-        parse_mode='Markdown'
-    )
-
+    threading.Thread(
+        target=run_liked_sync,
+        args=(message.chat.id, user_id, wait_msg.message_id),
+        daemon=True
+    ).start()
 
 @bot.message_handler(func=lambda message: message.text == '🔍 Поиск музыки')
 def handle_search_button(message):
