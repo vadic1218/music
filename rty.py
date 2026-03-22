@@ -7,7 +7,7 @@
 # Импорт библиотек
 import database
 from pathlib import Path
-from config import BOT_TOKEN, ADMIN_IDS, MAX_FILE_SIZE_MB, FFMPEG_THREADS, YANDEX_MUSIC_TOKEN, CACHE_DIR
+from config import BOT_TOKEN, ADMIN_IDS, MAX_FILE_SIZE_MB, FFMPEG_THREADS, YANDEX_MUSIC_TOKEN, CACHE_DIR, DATA_DIR
 import telebot
 import os
 import sys
@@ -94,6 +94,9 @@ PODCASTS_DIR = os.path.join(AUDIO_CACHE_DIR, "podcasts")
 os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
 os.makedirs(MUSIC_DIR, exist_ok=True)
 os.makedirs(PODCASTS_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
+
+YANDEX_CACHE_INDEX_PATH = Path(DATA_DIR) / "yandex_cache_index.json"
 
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
@@ -106,6 +109,185 @@ def escape_markdown(text):
     for char in ('\\', '_', '*', '`', '['):
         text = text.replace(char, f'\\{char}')
     return text
+
+
+def sanitize_filename(text, fallback="unknown", max_length=80):
+    if not text:
+        return fallback
+
+    sanitized = "".join(c for c in str(text) if c.isalnum() or c in (" ", "-", "_", ".", ",", "(", ")"))
+    sanitized = " ".join(sanitized.split()).strip(" ._-")
+    if not sanitized:
+        sanitized = fallback
+    return sanitized[:max_length]
+
+
+def make_yandex_cache_key(track_id, album_id):
+    return f"{int(track_id)}:{int(album_id or 0)}"
+
+
+def load_yandex_cache_index():
+    try:
+        if not YANDEX_CACHE_INDEX_PATH.exists():
+            return {}
+
+        raw_data = json.loads(YANDEX_CACHE_INDEX_PATH.read_text(encoding="utf-8"))
+        return raw_data if isinstance(raw_data, dict) else {}
+    except Exception as e:
+        print(f"[Yandex Cache] Failed to load cache index: {e}")
+        return {}
+
+
+def save_yandex_cache_index(index_data):
+    payload = json.dumps(index_data, ensure_ascii=False, indent=2)
+    try:
+        temp_path = YANDEX_CACHE_INDEX_PATH.with_suffix(".tmp")
+        temp_path.write_text(payload, encoding="utf-8")
+        temp_path.replace(YANDEX_CACHE_INDEX_PATH)
+    except Exception as e:
+        try:
+            YANDEX_CACHE_INDEX_PATH.write_text(payload, encoding="utf-8")
+        except Exception as fallback_error:
+            print(f"[Yandex Cache] Failed to save cache index: {e}; fallback failed: {fallback_error}")
+
+
+def resolve_cached_yandex_track(track_id, album_id):
+    cache_key = make_yandex_cache_key(track_id, album_id)
+    index_data = load_yandex_cache_index()
+    item = index_data.get(cache_key)
+
+    if not item:
+        return None, None
+
+    file_path = item.get("path")
+    if file_path and os.path.exists(file_path):
+        return file_path, item
+
+    index_data.pop(cache_key, None)
+    save_yandex_cache_index(index_data)
+    return None, None
+
+
+def update_yandex_cache_entry(track_id, album_id, file_path, title, performer, duration_seconds=0, liked_synced=False):
+    cache_key = make_yandex_cache_key(track_id, album_id)
+    index_data = load_yandex_cache_index()
+    index_data[cache_key] = {
+        "track_id": int(track_id),
+        "album_id": int(album_id or 0),
+        "path": file_path,
+        "title": title,
+        "performer": performer,
+        "duration_seconds": duration_seconds or 0,
+        "liked_synced": bool(liked_synced),
+        "updated_at": datetime.utcnow().isoformat()
+    }
+    save_yandex_cache_index(index_data)
+
+
+def remove_yandex_cache_entry(track_id, album_id, delete_file=False):
+    cache_key = make_yandex_cache_key(track_id, album_id)
+    index_data = load_yandex_cache_index()
+    item = index_data.pop(cache_key, None)
+    save_yandex_cache_index(index_data)
+
+    if delete_file and item:
+        file_path = item.get("path")
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"[Yandex Cache] Failed to delete cached file {file_path}: {e}")
+
+
+def get_yandex_liked_tracks():
+    if not ym_client:
+        return [], "Клиент Яндекс.Музыки не настроен."
+
+    try:
+        with ym_client_lock:
+            likes = ym_client.users_likes_tracks()
+
+        if not likes:
+            return [], None
+
+        tracks = likes.fetch_tracks() or []
+        valid_tracks = [track for track in tracks if track]
+        return valid_tracks, None
+    except Exception as e:
+        print(f"[Yandex Likes] Failed to load liked tracks: {e}")
+        return [], str(e)
+
+
+def sync_yandex_liked_tracks():
+    tracks, error = get_yandex_liked_tracks()
+    if error:
+        return {
+            "success": False,
+            "message": f"Не удалось получить лайки Яндекс.Музыки: {error}"
+        }
+
+    current_keys = set()
+    downloaded = 0
+    reused = 0
+    failed = []
+
+    for track in tracks:
+        try:
+            album_id = track.albums[0].id if track.albums else 0
+            cache_key = make_yandex_cache_key(track.id, album_id)
+            current_keys.add(cache_key)
+
+            cached_path, cache_item = resolve_cached_yandex_track(track.id, album_id)
+            if cached_path:
+                update_yandex_cache_entry(
+                    track.id,
+                    album_id,
+                    cached_path,
+                    track.title,
+                    ", ".join(a.name for a in track.artists) if track.artists else "Unknown Artist",
+                    (track.duration_ms or 0) / 1000 if hasattr(track, "duration_ms") else 0,
+                    liked_synced=True
+                )
+                reused += 1
+                continue
+
+            audio_path, title, performer, status = download_yandex_track_fast(track.id, album_id, liked_synced=True)
+            if status == "success" and audio_path:
+                downloaded += 1
+            else:
+                failed.append(f"{track.title}: {status}")
+        except Exception as e:
+            failed.append(f"{getattr(track, 'title', 'Unknown track')}: {e}")
+
+    index_data = load_yandex_cache_index()
+    removed = 0
+    for cache_key, item in list(index_data.items()):
+        if not item.get("liked_synced"):
+            continue
+        if cache_key in current_keys:
+            continue
+        remove_yandex_cache_entry(item["track_id"], item.get("album_id", 0), delete_file=True)
+        removed += 1
+
+    summary = (
+        f"Синхронизация завершена.\n"
+        f"Лайков найдено: {len(tracks)}\n"
+        f"Новых скачано: {downloaded}\n"
+        f"Переиспользовано из кэша: {reused}\n"
+        f"Удалено из бота: {removed}"
+    )
+    if failed:
+        summary += f"\nОшибок: {len(failed)}"
+
+    return {
+        "success": True,
+        "message": summary,
+        "downloaded": downloaded,
+        "reused": reused,
+        "removed": removed,
+        "failed": failed,
+        "tracks": tracks,
+    }
 
 
 def build_admin_contact_button(label="Contact Admin"):
@@ -570,6 +752,7 @@ def clear_cache_folders():
                 except Exception as e:
                     print(f'Не удалось удалить {file_path}. Причина: {e}')
 
+        save_yandex_cache_index({})
         return total_deleted
     except Exception as e:
         print(f"[!] Ошибка при очистке кэша: {e}")
@@ -713,17 +896,26 @@ def search_youtube_music(query, limit=10):
 
 
 # --- СКАЧИВАНИЕ ИЗ YANDEX И YOUTUBЕ ---
-def download_yandex_track_fast(track_id, album_id):
-    """Скачивает трек из Яндекс.Музыки"""
+def download_yandex_track_fast(track_id, album_id, liked_synced=False):
+    """????????? ???? ?? ??????.?????? ? ?????????????????? ?????????? ????."""
     if not ym_client:
-        return None, None, None, "Клиент Яндекс.Музыки не настроен."
+        return None, None, None, "?????? ??????.?????? ?? ????????."
 
     try:
+        cached_path, cache_item = resolve_cached_yandex_track(track_id, album_id)
+        if cached_path:
+            return (
+                cached_path,
+                cache_item.get("title") or "Unknown Title",
+                cache_item.get("performer") or "Unknown Artist",
+                "success"
+            )
+
         with ym_client_lock:
             tracks = ym_client.tracks([f"{track_id}:{album_id}"])
 
         if not tracks:
-            return None, None, None, "Трек не найден."
+            return None, None, None, "???? ?? ??????."
 
         track = tracks[0]
 
@@ -731,7 +923,7 @@ def download_yandex_track_fast(track_id, album_id):
             download_info = track.get_download_info()
 
         if not download_info:
-            return None, None, None, "Информация для скачивания недоступна."
+            return None, None, None, "?????????? ??? ?????????? ??????????."
 
         best_info = min(
             [info for info in download_info if info.codec == 'mp3'],
@@ -742,29 +934,50 @@ def download_yandex_track_fast(track_id, album_id):
         if not best_info:
             best_info = download_info[0] if download_info else None
             if not best_info:
-                return None, None, None, "Нет подходящего формата."
+                return None, None, None, "??? ??????????? ???????."
 
-        safe_title = "".join([c for c in track.title if c.isalnum() or c in (' ', '-', '_')]).strip()
-        safe_artists = "_".join([a.name for a in track.artists[:1]]) if track.artists else "Unknown"
+        artist_name = track.artists[0].name if track.artists else "Unknown Artist"
+        performer = ", ".join(a.name for a in track.artists) if track.artists else "Unknown Artist"
+        safe_title = sanitize_filename(track.title, fallback=f"track_{track_id}", max_length=70)
+        safe_artist = sanitize_filename(artist_name, fallback="Unknown Artist", max_length=40)
 
-        duration_seconds = track.duration_ms / 1000 if hasattr(track, 'duration_ms') else 0
+        duration_seconds = track.duration_ms / 1000 if hasattr(track, 'duration_ms') and track.duration_ms else 0
         target_dir = get_target_folder(duration_seconds)
         os.makedirs(target_dir, exist_ok=True)
 
-        filename = f"{safe_artists} - {safe_title}.mp3"
+        filename = f"ym_{track_id}_{album_id}_{safe_artist} - {safe_title}.mp3"
         filepath = os.path.join(target_dir, filename)
+        legacy_filename = f"{safe_artist} - {safe_title}.mp3"
+        legacy_candidates = [
+            os.path.join(MUSIC_DIR, legacy_filename),
+            os.path.join(PODCASTS_DIR, legacy_filename),
+            os.path.join(target_dir, legacy_filename),
+        ]
 
-        if os.path.exists(filepath):
-            os.remove(filepath)
+        if not os.path.exists(filepath):
+            for candidate in legacy_candidates:
+                if os.path.exists(candidate):
+                    filepath = candidate
+                    break
 
-        track.download(filepath, codec='mp3', bitrate_in_kbps=best_info.bitrate_in_kbps)
+        if not os.path.exists(filepath):
+            track.download(filepath, codec='mp3', bitrate_in_kbps=best_info.bitrate_in_kbps)
 
-        return filepath, track.title, ", ".join(
-            [a.name for a in track.artists]) if track.artists else "Unknown Artist", "success"
+        update_yandex_cache_entry(
+            track_id,
+            album_id,
+            filepath,
+            track.title,
+            performer,
+            duration_seconds,
+            liked_synced=liked_synced
+        )
+
+        return filepath, track.title, performer, "success"
 
     except Exception as e:
-        print(f"[Yandex] Ошибка скачивания: {e}")
-        return None, None, None, f"Ошибка скачивания: {str(e)}"
+        print(f"[Yandex] ?????? ??????????: {e}")
+        return None, None, None, f"?????? ??????????: {str(e)}"
 
 
 def download_from_youtube_fast(query, is_url=False):
@@ -1057,9 +1270,10 @@ def get_folder_files(folder_path):
                 files.append({
                     'name': file,
                     'path': file_path,
-                    'size': round(file_size, 2)
+                    'size': round(file_size, 2),
+                    'mtime': os.path.getmtime(file_path)
                 })
-        files.sort(key=lambda x: x['name'])
+        files.sort(key=lambda x: (-x['mtime'], x['name']))
         return files
     except Exception as e:
         print(f"[!] Ошибка получения файлов из папки {folder_path}: {e}")
@@ -1764,15 +1978,57 @@ def handle_music_link(message):
 
 @bot.message_handler(func=lambda message: message.text == '🎵 Мне понравилось')
 def handle_liked_button(message):
-    bot.reply_to(message,
-                 "🎵 *Мне понравилось*\n\n"
-                 "🎧 *Эта функция в разработке...*\n\n"
-                 "Скоро здесь можно будет:\n"
-                 "• Смотреть историю скачиваний\n"
-                 "• Добавлять треки в избранное\n"
-                 "• Создавать плейлисты\n\n"
-                 "Следите за обновлениями!",
-                 parse_mode='Markdown')
+    if not ym_client:
+        bot.reply_to(
+            message,
+            "❌ Яндекс.Музыка не настроена. Добавьте `YANDEX_MUSIC_TOKEN` и попробуйте снова.",
+            parse_mode='Markdown'
+        )
+        return
+
+    wait_msg = bot.reply_to(
+        message,
+        "🎵 *Синхронизирую треки из раздела «Мне понравилось»...*\n\n"
+        "Это может занять некоторое время, если лайков много.",
+        parse_mode='Markdown'
+    )
+
+    sync_result = sync_yandex_liked_tracks()
+    if not sync_result["success"]:
+        safe_edit_message_text(
+            f"❌ *Не удалось синхронизировать лайки*\n\n{escape_markdown(sync_result['message'])}",
+            chat_id=message.chat.id,
+            message_id=wait_msg.message_id,
+            parse_mode='Markdown'
+        )
+        return
+
+    tracks = sync_result.get("tracks", [])
+    preview_lines = []
+    for track in tracks[:10]:
+        artist_names = ", ".join(a.name for a in track.artists) if getattr(track, "artists", None) else "Unknown Artist"
+        preview_lines.append(f"• {escape_markdown(artist_names)} - {escape_markdown(track.title)}")
+
+    response_text = (
+        "✅ *Раздел «Мне понравилось» синхронизирован*\n\n"
+        f"• Всего лайков: {len(tracks)}\n"
+        f"• Новых скачано: {sync_result['downloaded']}\n"
+        f"• Уже было в кэше: {sync_result['reused']}\n"
+        f"• Удалено из бота: {sync_result['removed']}"
+    )
+
+    if preview_lines:
+        response_text += "\n\n*Первые треки:*\n" + "\n".join(preview_lines)
+
+    if sync_result.get("failed"):
+        response_text += f"\n\n⚠️ Ошибок синхронизации: {len(sync_result['failed'])}"
+
+    safe_edit_message_text(
+        response_text,
+        chat_id=message.chat.id,
+        message_id=wait_msg.message_id,
+        parse_mode='Markdown'
+    )
 
 
 @bot.message_handler(func=lambda message: message.text == '🔍 Поиск музыки')
