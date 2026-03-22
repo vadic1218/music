@@ -10,6 +10,7 @@ from pathlib import Path
 from config import BOT_TOKEN, ADMIN_IDS, MAX_FILE_SIZE_MB, FFMPEG_THREADS, YANDEX_MUSIC_TOKEN
 import telebot
 import os
+import sys
 import yt_dlp
 import re
 import time
@@ -32,10 +33,17 @@ from datetime import datetime, timedelta
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set. Put it into the project .env file before starting the bot.")
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+ADMIN_CONTACT_ID = ADMIN_IDS[0] if ADMIN_IDS else None
 
 # Проверка базы данных
 print("\n🔍 Проверка базы данных...")
@@ -90,11 +98,59 @@ os.makedirs(PODCASTS_DIR, exist_ok=True)
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
-def check_access(user_id):
-    """Проверяет, есть ли у пользователя доступ"""
+def escape_markdown(text):
+    """Escape dynamic text for Telegram Markdown."""
+    if text is None:
+        return ""
+    text = str(text)
+    for char in ('\\', '_', '*', '`', '['):
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
+def build_admin_contact_button(label="Contact Admin"):
+    if ADMIN_CONTACT_ID:
+        return types.InlineKeyboardButton(label, url=f"tg://user?id={ADMIN_CONTACT_ID}")
+    return None
+
+
+def ensure_subscription_access(user_id, chat_id=None, reply_target=None, send_details=True):
+    """Checks whether the user has access to search and downloads."""
     has_access, message = database.check_subscription(user_id)
+    if has_access or chat_id is None:
+        return has_access, message
+
+    if send_details:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("Get Access", callback_data="buy_subscription"),
+            types.InlineKeyboardButton("Use Promo Code", callback_data="activate_promo")
+        )
+        contact_button = build_admin_contact_button()
+        if contact_button:
+            markup.add(contact_button)
+
+        access_text = (
+            "*Access is limited*\n\n"
+            f"{message}\n\n"
+            "*How to get access:*\n"
+            "1. Activate a promo code\n"
+            "2. Buy a subscription\n"
+            "3. Contact admin if you need help"
+        )
+
+        if reply_target is not None:
+            bot.reply_to(reply_target, access_text, parse_mode='Markdown', reply_markup=markup)
+        else:
+            bot.send_message(chat_id, access_text, parse_mode='Markdown', reply_markup=markup)
+
     return has_access, message
 
+
+def check_access(user_id):
+    """Checks whether the user has an active subscription."""
+    has_access, message = database.check_subscription(user_id)
+    return has_access, message
 
 def is_youtube_playlist(url):
     """Проверяет, является ли ссылка плейлистом YouTube"""
@@ -825,9 +881,15 @@ def show_search_results(chat_id, query, results, page=0):
     if not results:
         return "❌ По вашему запросу ничего не найдено."
 
+    history = user_search_history.get(chat_id, {})
+    original_results = history.get('original_results')
+    if original_results is None or history.get('query') != query:
+        original_results = list(results)
+
     user_search_history[chat_id] = {
         'query': query,
-        'results': results,
+        'results': list(results),
+        'original_results': original_results,
         'timestamp': time.time()
     }
 
@@ -835,7 +897,7 @@ def show_search_results(chat_id, query, results, page=0):
     end_idx = start_idx + 5
     page_results = results[start_idx:end_idx]
 
-    message_text = f"🔍 *Результаты поиска: '{query}'*\n\n"
+    message_text = f"🔎 *Search results for: '{escape_markdown(query)}'*\n\n"
 
     yandex_count = len([r for r in results if r.get('source') == 'yandex'])
     youtube_count = len([r for r in results if r.get('source') == 'youtube'])
@@ -846,15 +908,15 @@ def show_search_results(chat_id, query, results, page=0):
 
     for track in page_results:
         idx = track.get('global_index', 0)
-        title = track.get('title', 'Без названия')
+        title = escape_markdown(track.get('title', 'Unknown title'))
         source = track.get('source', 'unknown')
 
         if source == 'yandex':
             source_icon = "🎵"
-            artist_info = track.get('artists', 'Неизвестный исполнитель')
+            artist_info = escape_markdown(track.get('artists', 'Unknown artist'))
         elif source == 'youtube':
             source_icon = "📺"
-            artist_info = track.get('artist', 'Неизвестный автор')
+            artist_info = escape_markdown(track.get('artist', 'Unknown channel'))
         else:
             source_icon = "🔍"
             artist_info = 'Неизвестно'
@@ -1458,16 +1520,23 @@ def handle_clear_cache(message):
 
 @bot.message_handler(commands=['search_all', 'search'])
 def handle_search_all(message):
-    """Поиск во всех доступных сервисах"""
+    """Handles a combined search across all supported sources."""
+    has_access, _ = ensure_subscription_access(message.from_user.id, message.chat.id, reply_target=message)
+    if not has_access:
+        return
     query = message.text.replace('/search_all', '').replace('/search', '').strip()
     process_search_query(message.chat.id, query, is_command=True)
 
 
 @bot.message_handler(commands=['search_yandex'])
 def handle_search_yandex(message):
-    """Поиск только в Яндекс.Музыке"""
+    """Handles a search request in Yandex Music."""
     if not ym_client:
-        bot.reply_to(message, "❌ Клиент Яндекс.Музыки не настроен.")
+        bot.reply_to(message, "Yandex Music is not configured.")
+        return
+
+    has_access, _ = ensure_subscription_access(message.from_user.id, message.chat.id, reply_target=message)
+    if not has_access:
         return
 
     query = message.text.replace('/search_yandex', '').strip()
@@ -1505,7 +1574,11 @@ def handle_search_yandex(message):
 
 @bot.message_handler(commands=['search_youtube', 'youtube'])
 def handle_search_youtube(message):
-    """Поиск только на YouTube"""
+    """Handles a search request on YouTube."""
+    has_access, _ = ensure_subscription_access(message.from_user.id, message.chat.id, reply_target=message)
+    if not has_access:
+        return
+
     query = message.text.replace('/search_youtube', '').replace('/youtube', '').strip()
 
     if not query:
@@ -1795,27 +1868,11 @@ def handle_auto_search(message):
         if query.lower() in ['поиск', 'search', 'искать', 'музыка', 'песня']:
             return
 
-        # Проверяем доступ перед поиском
+        # Check subscription access before automatic search/download.
         user_id = message.from_user.id
-        has_access, msg = database.check_subscription(user_id)
-
+        has_access, _ = ensure_subscription_access(user_id, message.chat.id, reply_target=message)
         if not has_access:
-            markup = types.InlineKeyboardMarkup()
-            markup.add(
-                types.InlineKeyboardButton("💎 Получить доступ", callback_data="buy_subscription"),
-                types.InlineKeyboardButton("🎁 Активировать промокод", callback_data="activate_promo")
-            )
-
-            bot.reply_to(message,
-                         f"🔒 *Доступ ограничен*\n\n"
-                         f"Для поиска и скачивания музыки нужна подписка.\n\n"
-                         f"{msg}\n\n"
-                         f"💡 *Как получить доступ:*\n"
-                         f"1. Активируйте промокод\n"
-                         f"2. Оформите подписку\n"
-                         f"3. Обратитесь к администратору",
-                         parse_mode='Markdown',
-                         reply_markup=markup)
+            return
             return
 
         # Если доступ есть - выполняем поиск
@@ -1958,10 +2015,10 @@ def handle_callback(call):
         elif data == "buy_subscription":
             try:
                 markup = types.InlineKeyboardMarkup(row_width=2)
-                markup.add(
-                    types.InlineKeyboardButton("🎁 Активировать промокод", callback_data="activate_promo"),
-                    types.InlineKeyboardButton("📞 Связаться", url="https://t.me/your_username")
-                )
+                markup.add(types.InlineKeyboardButton("Use Promo Code", callback_data="activate_promo"))
+                contact_button = build_admin_contact_button("Contact Admin")
+                if contact_button:
+                    markup.add(contact_button)
                 bot.edit_message_text(
                     "💳 *Оформление подписки*\n\n"
                     "📋 *Выберите способ:*\n\n"
@@ -1981,10 +2038,10 @@ def handle_callback(call):
         elif data == "pricing":
             try:
                 markup = types.InlineKeyboardMarkup(row_width=2)
-                markup.add(
-                    types.InlineKeyboardButton("🎁 Активировать промокод", callback_data="activate_promo"),
-                    types.InlineKeyboardButton("📞 Связаться", url="https://t.me/your_username")
-                )
+                markup.add(types.InlineKeyboardButton("Use Promo Code", callback_data="activate_promo"))
+                contact_button = build_admin_contact_button("Contact Admin")
+                if contact_button:
+                    markup.add(contact_button)
                 bot.edit_message_text(
                     "💰 *Тарифы подписки*\n\n"
                     "🔹 *PREMIUM подписка* (49₽/месяц):\n"
@@ -2136,20 +2193,19 @@ def handle_callback(call):
         elif data == "contact_admin":
             try:
                 markup = types.InlineKeyboardMarkup()
-                markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_subscribe"))
+                markup.add(types.InlineKeyboardButton("Back", callback_data="back_to_subscribe"))
+                contact_button = build_admin_contact_button("Write to Admin")
+                if contact_button:
+                    markup.add(contact_button)
 
                 bot.edit_message_text(
-                    "📞 *Связь с администратором*\n\n"
-                    "Для связи с администратором:\n\n"
-                    "👤 *Контакты:*\n"
-                    "• Telegram: @your_username\n"
-                    "• Email: admin@example.com\n\n"
-                    "💬 *При обращении укажите:*\n"
-                    "1. Ваш Telegram ID\n"
-                    "2. Цель обращения (подписка, вопрос, проблема)\n"
-                    "3. По возможности - скриншот проблемы\n\n"
-                    "⏱ *Время ответа:*\n"
-                    "• Обычно в течение 24 часов",
+                    "*Contact admin*\n\n"
+                    "Use the button below to open a dialog with the admin.\n\n"
+                    "*When contacting us, include:*\n"
+                    "1. Your Telegram ID\n"
+                    "2. Reason for contact\n"
+                    "3. Short description of the issue or request\n\n"
+                    "*Response time:* usually within 24 hours",
                     chat_id=chat_id,
                     message_id=message_id,
                     parse_mode='Markdown',
@@ -2239,18 +2295,19 @@ def handle_callback(call):
                 history = user_search_history[chat_id]
                 query = history['query']
                 all_results = history['results']
+                original_results = history.get('original_results', all_results)
 
                 if filter_type == "all":
-                    filtered_results = all_results
+                    filtered_results = original_results
                     show_all_button = True
                 elif filter_type == "yandex":
-                    filtered_results = [r for r in all_results if r.get('source') == 'yandex']
+                    filtered_results = [r for r in original_results if r.get('source') == 'yandex']
                     show_all_button = False
                 elif filter_type == "youtube":
-                    filtered_results = [r for r in all_results if r.get('source') == 'youtube']
+                    filtered_results = [r for r in original_results if r.get('source') == 'youtube']
                     show_all_button = False
                 else:
-                    filtered_results = all_results
+                    filtered_results = original_results
                     show_all_button = True
 
                 if not filtered_results:
@@ -2259,8 +2316,7 @@ def handle_callback(call):
 
                 for i, result in enumerate(filtered_results):
                     result['global_index'] = i + 1
-
-                user_search_history[chat_id]['results'] = filtered_results
+                user_search_history[chat_id]['results'] = list(filtered_results)
 
                 message_text = show_search_results(chat_id, query, filtered_results, page=0)
                 keyboard = create_search_keyboard(filtered_results, page=0, show_all_button=show_all_button)

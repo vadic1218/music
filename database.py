@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import json
+import sys
 import threading
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -9,19 +10,58 @@ from config import DEFAULT_PROMO_CODES, SUBSCRIPTION_LIMITS, ADMIN_IDS
 
 BASE_DIR = Path(__file__).resolve().parent
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 class Database:
-    def __init__(self, db_path='music_bot.db'):
+    def __init__(self, db_path='data/music_bot.db'):
         self.db_path = str(Path(db_path)) if os.path.isabs(db_path) else str(BASE_DIR / db_path)
+        self.legacy_db_path = str(BASE_DIR / 'music_bot.db')
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self._migrate_legacy_db()
         self.init_db()
+
+    def _migrate_legacy_db(self):
+        target = Path(self.db_path)
+        legacy = Path(self.legacy_db_path)
+
+        if target.exists() or not legacy.exists() or target.resolve() == legacy.resolve():
+            return
+
+        try:
+            source = sqlite3.connect(f"file:{legacy.resolve().as_posix()}?mode=ro", uri=True)
+            try:
+                destination = self._connect()
+                try:
+                    source.backup(destination)
+                    destination.commit()
+                    print(f"[DATABASE] Migrated legacy database to {target}")
+                finally:
+                    destination.close()
+            finally:
+                source.close()
+        except Exception as e:
+            print(f"[DATABASE] Legacy database migration skipped: {e}")
+
+    def _connect(self):
+        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode = MEMORY")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        return conn
 
     def init_db(self):
         """Инициализация базы данных"""
         try:
             with self.lock:
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 # Таблица пользователей
@@ -140,8 +180,7 @@ class Database:
         """Добавляет пользователя в базу"""
         try:
             with self.lock:
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 cursor.execute('''
@@ -165,8 +204,7 @@ class Database:
                 if user_id in ADMIN_IDS:
                     return True, self._get_admin_subscription_message()
 
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 # Обновляем время последней активности
@@ -291,8 +329,7 @@ class Database:
                         }
                     }
 
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 cursor.execute('''
@@ -353,7 +390,7 @@ class Database:
                 if user_id in ADMIN_IDS:
                     return True
 
-                conn = sqlite3.connect(self.db_path)
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 # Деактивируем старые активные подписки
@@ -397,7 +434,7 @@ class Database:
                 if user_id in ADMIN_IDS:
                     return True
 
-                conn = sqlite3.connect(self.db_path)
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 # Увеличиваем общий счетчик
@@ -425,65 +462,63 @@ class Database:
     # ===== МЕТОДЫ ДЛЯ ПРОМОКОДОВ =====
 
     def check_promo_code(self, code: str) -> Dict[str, Any]:
-        """Проверяет промокод"""
+        """Checks whether a promo code is valid."""
         try:
             with self.lock:
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
+                conn = self._connect()
                 cursor = conn.cursor()
 
-                cursor.execute('''
-                SELECT code, subscription_type, max_uses, uses_count, expiry_date, is_active, description
-                FROM promo_codes 
-                WHERE code = ? COLLATE NOCASE
-                ''', (code.upper(),))
+                try:
+                    cursor.execute('''
+                    SELECT code, subscription_type, max_uses, uses_count, expiry_date, is_active, description
+                    FROM promo_codes 
+                    WHERE code = ? COLLATE NOCASE
+                    ''', (code.upper(),))
 
-                result = cursor.fetchone()
+                    result = cursor.fetchone()
 
-                if not result:
+                    if not result:
+                        return {
+                            'valid': False,
+                            'message': 'Promo code not found'
+                        }
+
+                    if not result['is_active']:
+                        return {
+                            'valid': False,
+                            'message': 'Promo code is inactive'
+                        }
+
+                    if result['expiry_date']:
+                        try:
+                            expiry = datetime.strptime(result['expiry_date'], '%Y-%m-%d %H:%M:%S')
+                            if expiry < datetime.now():
+                                return {
+                                    'valid': False,
+                                    'message': 'Promo code has expired'
+                                }
+                        except:
+                            pass
+
+                    if result['max_uses'] > 0 and result['uses_count'] >= result['max_uses']:
+                        return {
+                            'valid': False,
+                            'message': f'Promo usage limit reached ({result["uses_count"]}/{result["max_uses"]})'
+                        }
+
                     return {
-                        'valid': False,
-                        'message': '❌ Промокод не найден'
+                        'valid': True,
+                        'message': f'Promo code is valid.\nSubscription type: {result["subscription_type"].upper()}',
+                        'data': dict(result)
                     }
-
-                # Проверка активности
-                if not result['is_active']:
-                    return {
-                        'valid': False,
-                        'message': '❌ Промокод неактивен'
-                    }
-
-                # Проверка срока действия
-                if result['expiry_date']:
-                    try:
-                        expiry = datetime.strptime(result['expiry_date'], '%Y-%m-%d %H:%M:%S')
-                        if expiry < datetime.now():
-                            return {
-                                'valid': False,
-                                'message': '❌ Срок действия промокода истек'
-                            }
-                    except:
-                        pass
-
-                # Проверка лимита использования
-                if result['max_uses'] > 0 and result['uses_count'] >= result['max_uses']:
-                    return {
-                        'valid': False,
-                        'message': f'❌ Лимит использования исчерпан ({result["uses_count"]}/{result["max_uses"]})'
-                    }
-
-                conn.close()
-                return {
-                    'valid': True,
-                    'message': f'✅ Промокод действителен!\nТип подписки: {result["subscription_type"].upper()}',
-                    'data': dict(result)
-                }
+                finally:
+                    conn.close()
 
         except Exception as e:
-            print(f"[DATABASE] Ошибка проверки промокода: {e}")
+            print(f"[DATABASE] Error checking promo code: {e}")
             return {
                 'valid': False,
-                'message': '❌ Ошибка проверки промокода'
+                'message': 'Error checking promo code'
             }
 
     def use_promo_code(self, user_id: int, code: str) -> Dict[str, Any]:
@@ -504,7 +539,7 @@ class Database:
             promo_data = check_result['data']
 
             with self.lock:
-                conn = sqlite3.connect(self.db_path)
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 # Проверяем, не использовал ли пользователь уже этот промокод
@@ -612,8 +647,7 @@ class Database:
     def _check_promo_code_no_lock(self, code: str) -> Dict[str, Any]:
         """Проверяет промокод БЕЗ блокировки (для внутреннего использования)"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
+            conn = self._connect()
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -678,8 +712,7 @@ class Database:
         """Получает историю промокодов пользователя"""
         try:
             with self.lock:
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 cursor.execute('''
@@ -713,7 +746,7 @@ class Database:
             with self.lock:
                 code = code.upper().strip()
 
-                conn = sqlite3.connect(self.db_path)
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 cursor.execute('SELECT COUNT(*) FROM promo_codes WHERE code = ?', (code,))
@@ -758,8 +791,7 @@ class Database:
         """Получает все промокоды"""
         try:
             with self.lock:
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 cursor.execute('''
@@ -793,7 +825,7 @@ class Database:
         """Получает количество активных пользователей"""
         try:
             with self.lock:
-                conn = sqlite3.connect(self.db_path)
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 cursor.execute('''
@@ -814,7 +846,7 @@ class Database:
         """Получает общее количество скачиваний"""
         try:
             with self.lock:
-                conn = sqlite3.connect(self.db_path)
+                conn = self._connect()
                 cursor = conn.cursor()
 
                 cursor.execute('SELECT SUM(total_downloads) FROM users')
