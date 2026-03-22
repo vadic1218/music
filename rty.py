@@ -166,6 +166,21 @@ def build_main_menu_keyboard():
     return keyboard
 
 
+def safe_edit_message_text(text, chat_id, message_id, **kwargs):
+    try:
+        return bot.edit_message_text(
+            text,
+            chat_id=chat_id,
+            message_id=message_id,
+            **kwargs
+        )
+    except Exception as e:
+        error_text = str(e)
+        if "message is not modified" in error_text:
+            return None
+        raise
+
+
 def is_menu_button_text(text):
     if not text:
         return False
@@ -1968,7 +1983,7 @@ def handle_callback(call):
         # Разбираем данные
         if data == "new_search":
             try:
-                bot.edit_message_text(
+                safe_edit_message_text(
                     "🔍 *Новый поиск*\n\n"
                     "Просто отправьте название песни или исполнителя в чат!\n\n"
                     "🎵 *Примеры:*\n"
@@ -1995,7 +2010,7 @@ def handle_callback(call):
                 types.InlineKeyboardButton("❌ Нет, отменить", callback_data="clear_cache_cancel")
             )
             try:
-                bot.edit_message_text(
+                safe_edit_message_text(
                     "⚠️ *Внимание!*\n\n"
                     "Вы уверены, что хотите удалить ВСЕ файлы из кэша?\n\n"
                     "🗑️ *Будет удалено:*\n"
@@ -2014,7 +2029,7 @@ def handle_callback(call):
         elif data == "clear_cache_confirm":
             deleted_count = clear_cache_folders()
             try:
-                bot.edit_message_text(
+                safe_edit_message_text(
                     f"✅ *Кэш очищен!*\n\n"
                     f"🗑️ Удалено файлов: *{deleted_count}*\n\n"
                     f"💾 Теперь у вас {deleted_count} МБ свободного места.",
@@ -2028,7 +2043,7 @@ def handle_callback(call):
 
         elif data == "clear_cache_cancel":
             try:
-                bot.edit_message_text(
+                safe_edit_message_text(
                     "❌ *Очистка кэша отменена.*\n\n"
                     "Файлы не были удалены.",
                     chat_id=chat_id,
@@ -2045,7 +2060,7 @@ def handle_callback(call):
                 markup = types.InlineKeyboardMarkup()
                 markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_subscribe"))
 
-                bot.edit_message_text(
+                safe_edit_message_text(
                     "🎁 *Активация промокода*\n\n"
                     "Отправьте промокод в формате:\n"
                     "`/promo ВАШ_КОД`\n\n"
@@ -2081,7 +2096,7 @@ def handle_callback(call):
                 contact_button = build_admin_contact_button("Contact Admin")
                 if contact_button:
                     markup.add(contact_button)
-                bot.edit_message_text(
+                safe_edit_message_text(
                     "💳 *Оформление подписки*\n\n"
                     "📋 *Выберите способ:*\n\n"
                     "1. 🎁 *Промокод* - бесплатно и навсегда\n"
@@ -2104,7 +2119,7 @@ def handle_callback(call):
                 contact_button = build_admin_contact_button("Contact Admin")
                 if contact_button:
                     markup.add(contact_button)
-                bot.edit_message_text(
+                safe_edit_message_text(
                     "💰 *Тарифы подписки*\n\n"
                     "🔹 *PREMIUM подписка* (49₽/месяц):\n"
                     "• Неограниченное скачивание музыки\n"
@@ -2183,7 +2198,7 @@ def handle_callback(call):
                     markup = types.InlineKeyboardMarkup()
                     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_subscribe"))
 
-                bot.edit_message_text(
+                safe_edit_message_text(
                     stats_text,
                     chat_id=chat_id,
                     message_id=message_id,
@@ -2240,7 +2255,7 @@ def handle_callback(call):
                 markup = types.InlineKeyboardMarkup()
                 markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="stats"))
 
-                bot.edit_message_text(
+                safe_edit_message_text(
                     stats_text,
                     chat_id=chat_id,
                     message_id=message_id,
@@ -2260,7 +2275,7 @@ def handle_callback(call):
                 if contact_button:
                     markup.add(contact_button)
 
-                bot.edit_message_text(
+                safe_edit_message_text(
                     "*Contact admin*\n\n"
                     "Use the button below to open a dialog with the admin.\n\n"
                     "*When contacting us, include:*\n"
@@ -2311,7 +2326,7 @@ def handle_callback(call):
                         "Что вы хотите сделать?"
                     )
 
-                bot.edit_message_text(
+                safe_edit_message_text(
                     reply_text,
                     chat_id=chat_id,
                     message_id=message_id,
@@ -2338,7 +2353,7 @@ def handle_callback(call):
                         message_text = show_search_results(chat_id, query, results, page=page)
                         keyboard = create_search_keyboard(results, page=page, show_all_button=True)
 
-                        bot.edit_message_text(
+                        safe_edit_message_text(
                             message_text,
                             chat_id=chat_id,
                             message_id=message_id,
@@ -2384,7 +2399,7 @@ def handle_callback(call):
                 keyboard = create_search_keyboard(filtered_results, page=0, show_all_button=show_all_button)
 
                 try:
-                    bot.edit_message_text(
+                    safe_edit_message_text(
                         message_text,
                         chat_id=chat_id,
                         message_id=message_id,
@@ -2415,7 +2430,7 @@ def handle_callback(call):
                     album_id = int(parts[2])
                     page = int(parts[3])
 
-                    bot.edit_message_text(
+                    safe_edit_message_text(
                         "⚡ *Скачиваю трек из Яндекс.Музыки...*",
                         chat_id=chat_id,
                         message_id=message_id,
@@ -2449,7 +2464,7 @@ def handle_callback(call):
                                 message_text = show_search_results(chat_id, query, results, page=page)
                                 keyboard = create_search_keyboard(results, page=page, show_all_button=True)
 
-                                bot.edit_message_text(
+                                safe_edit_message_text(
                                     f"✅ *Трек скачан!*\n\n"
                                     f"🎵 *{title}*\n"
                                     f"👤 *{performer}*\n\n"
@@ -2463,7 +2478,7 @@ def handle_callback(call):
                                 markup = types.InlineKeyboardMarkup()
                                 markup.add(types.InlineKeyboardButton("🔍 Новый поиск", callback_data="new_search"))
 
-                                bot.edit_message_text(
+                                safe_edit_message_text(
                                     f"✅ *Трек успешно скачан!*\n\n"
                                     f"🎵 *{title}*\n"
                                     f"👤 *{performer}*\n\n"
@@ -2474,7 +2489,7 @@ def handle_callback(call):
                                     reply_markup=markup
                                 )
                         else:
-                            bot.edit_message_text(
+                            safe_edit_message_text(
                                 f"❌ *Не удалось отправить трек*\n\n"
                                 f"Попробуйте еще раз или выберите другой трек.",
                                 chat_id=chat_id,
@@ -2482,7 +2497,7 @@ def handle_callback(call):
                                 parse_mode='Markdown'
                             )
                     else:
-                        bot.edit_message_text(
+                        safe_edit_message_text(
                             f"❌ *Ошибка скачивания*\n\n"
                             f"Причина: {status}",
                             chat_id=chat_id,
@@ -2492,7 +2507,7 @@ def handle_callback(call):
                 except Exception as e:
                     print(f"[!] Ошибка скачивания Яндекс трека: {e}")
                     traceback.print_exc()
-                    bot.edit_message_text(
+                    safe_edit_message_text(
                         f"❌ *Ошибка при скачивании*\n\n"
                         f"Попробуйте еще раз.",
                         chat_id=chat_id,
@@ -2521,7 +2536,7 @@ def handle_callback(call):
                     page = int(parts[2])
                     url = f"https://youtube.com/watch?v={video_id}"
 
-                    bot.edit_message_text(
+                    safe_edit_message_text(
                         "⚡ *Скачиваю трек с YouTube...*",
                         chat_id=chat_id,
                         message_id=message_id,
@@ -2555,7 +2570,7 @@ def handle_callback(call):
                                 message_text = show_search_results(chat_id, query, results, page=page)
                                 keyboard = create_search_keyboard(results, page=page, show_all_button=True)
 
-                                bot.edit_message_text(
+                                safe_edit_message_text(
                                     f"✅ *Трек скачан!*\n\n"
                                     f"🎵 *{title}*\n"
                                     f"👤 *{performer}*\n\n"
@@ -2569,7 +2584,7 @@ def handle_callback(call):
                                 markup = types.InlineKeyboardMarkup()
                                 markup.add(types.InlineKeyboardButton("🔍 Новый поиск", callback_data="new_search"))
 
-                                bot.edit_message_text(
+                                safe_edit_message_text(
                                     f"✅ *Трек успешно скачан!*\n\n"
                                     f"🎵 *{title}*\n"
                                     f"👤 *{performer}*\n\n"
@@ -2580,7 +2595,7 @@ def handle_callback(call):
                                     reply_markup=markup
                                 )
                         else:
-                            bot.edit_message_text(
+                            safe_edit_message_text(
                                 f"❌ *Не удалось отправить трек*\n\n"
                                 f"Попробуйте еще раз или выберите другой трек.",
                                 chat_id=chat_id,
@@ -2588,7 +2603,7 @@ def handle_callback(call):
                                 parse_mode='Markdown'
                             )
                     else:
-                        bot.edit_message_text(
+                        safe_edit_message_text(
                             f"❌ *Ошибка скачивания*\n\n"
                             f"Причина: {status}",
                             chat_id=chat_id,
@@ -2598,7 +2613,7 @@ def handle_callback(call):
                 except Exception as e:
                     print(f"[!] Ошибка скачивания YouTube трека: {e}")
                     traceback.print_exc()
-                    bot.edit_message_text(
+                    safe_edit_message_text(
                         f"❌ *Ошибка при скачивании*\n\n"
                         f"Попробуйте еще раз.",
                         chat_id=chat_id,
@@ -2626,7 +2641,7 @@ def handle_callback(call):
                 files = get_folder_files(folder_path)
 
                 if not files:
-                    bot.edit_message_text(
+                    safe_edit_message_text(
                         f"{emoji} *Папка с {folder_name.lower()}*\n\n"
                         f"📭 Папка пуста\n\n"
                         f"💡 *Совет:*\n"
@@ -2649,7 +2664,7 @@ def handle_callback(call):
                 )
 
                 keyboard = create_files_keyboard(files, page=page, folder_type=folder_type)
-                bot.edit_message_text(
+                safe_edit_message_text(
                     message_text,
                     chat_id=chat_id,
                     message_id=message_id,
