@@ -223,7 +223,7 @@ def get_yandex_liked_tracks():
         return [], str(e)
 
 
-def sync_yandex_liked_tracks():
+def sync_yandex_liked_tracks(progress_callback=None):
     tracks, error = get_yandex_liked_tracks()
     if error:
         return {
@@ -231,12 +231,17 @@ def sync_yandex_liked_tracks():
             "message": f"Не удалось получить лайки Яндекс.Музыки: {error}"
         }
 
+    total_tracks = len(tracks)
+    print(f"[Yandex Likes] Sync started: total={total_tracks}")
+    if progress_callback:
+        progress_callback("start", total=total_tracks, processed=0, downloaded=0, reused=0, failed=0, removed=0)
+
     current_keys = set()
     downloaded = 0
     reused = 0
     failed = []
 
-    for track in tracks:
+    for index, track in enumerate(tracks, start=1):
         try:
             album_id = track.albums[0].id if track.albums else 0
             cache_key = make_yandex_cache_key(track.id, album_id)
@@ -254,6 +259,16 @@ def sync_yandex_liked_tracks():
                     liked_synced=True
                 )
                 reused += 1
+                if progress_callback and (index == 1 or index % 10 == 0 or index == total_tracks):
+                    progress_callback(
+                        "progress",
+                        total=total_tracks,
+                        processed=index,
+                        downloaded=downloaded,
+                        reused=reused,
+                        failed=len(failed),
+                        removed=0
+                    )
                 continue
 
             audio_path, title, performer, status = download_yandex_track_fast(track.id, album_id, liked_synced=True)
@@ -263,6 +278,17 @@ def sync_yandex_liked_tracks():
                 failed.append(f"{track.title}: {status}")
         except Exception as e:
             failed.append(f"{getattr(track, 'title', 'Unknown track')}: {e}")
+
+        if progress_callback and (index == 1 or index % 10 == 0 or index == total_tracks):
+            progress_callback(
+                "progress",
+                total=total_tracks,
+                processed=index,
+                downloaded=downloaded,
+                reused=reused,
+                failed=len(failed),
+                removed=0
+            )
 
     index_data = load_yandex_cache_index()
     removed = 0
@@ -274,9 +300,24 @@ def sync_yandex_liked_tracks():
         remove_yandex_cache_entry(item["track_id"], item.get("album_id", 0), delete_file=True)
         removed += 1
 
+    print(
+        f"[Yandex Likes] Sync completed: total={total_tracks}, "
+        f"downloaded={downloaded}, reused={reused}, removed={removed}, failed={len(failed)}"
+    )
+    if progress_callback:
+        progress_callback(
+            "cleanup",
+            total=total_tracks,
+            processed=total_tracks,
+            downloaded=downloaded,
+            reused=reused,
+            failed=len(failed),
+            removed=removed
+        )
+
     summary = (
         f"Синхронизация завершена.\n"
-        f"Лайков найдено: {len(tracks)}\n"
+        f"Лайков найдено: {total_tracks}\n"
         f"Новых скачано: {downloaded}\n"
         f"Переиспользовано из кэша: {reused}\n"
         f"Удалено из бота: {removed}"
@@ -319,6 +360,17 @@ def format_liked_sync_result(sync_result):
     return response_text
 
 
+def format_liked_sync_progress(total, processed, downloaded, reused, failed, removed=0):
+    return (
+        "🎵 *Синхронизирую треки из раздела «Мне понравилось»...*\n\n"
+        f"• Обработано: {processed}/{total}\n"
+        f"• Новых скачано: {downloaded}\n"
+        f"• Уже было в кэше: {reused}\n"
+        f"• Ошибок: {failed}\n"
+        f"• Удалено из бота: {removed}"
+    )
+
+
 def finish_liked_sync(user_id):
     with liked_sync_state_lock:
         active_liked_sync_users.discard(user_id)
@@ -326,7 +378,19 @@ def finish_liked_sync(user_id):
 
 def run_liked_sync(chat_id, user_id, wait_message_id):
     try:
-        sync_result = sync_yandex_liked_tracks()
+        def progress_callback(stage, total, processed, downloaded, reused, failed, removed):
+            print(
+                f"[Yandex Likes] stage={stage} processed={processed}/{total} "
+                f"downloaded={downloaded} reused={reused} failed={failed} removed={removed}"
+            )
+            safe_edit_message_text(
+                format_liked_sync_progress(total, processed, downloaded, reused, failed, removed),
+                chat_id=chat_id,
+                message_id=wait_message_id,
+                parse_mode='Markdown'
+            )
+
+        sync_result = sync_yandex_liked_tracks(progress_callback=progress_callback)
         if not sync_result["success"]:
             safe_edit_message_text(
                 f"❌ *Не удалось синхронизировать лайки*\n\n{escape_markdown(sync_result['message'])}",
