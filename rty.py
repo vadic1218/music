@@ -147,6 +147,25 @@ def ensure_subscription_access(user_id, chat_id=None, reply_target=None, send_de
     return has_access, message
 
 
+def build_main_menu_keyboard():
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(
+        types.KeyboardButton('🎵 Мне понравилось'),
+        types.KeyboardButton('🔍 Поиск музыки')
+    )
+    keyboard.row(types.KeyboardButton('📺 YouTube'))
+    keyboard.row(
+        types.KeyboardButton('📁 Музыка'),
+        types.KeyboardButton('🎙️ Подкасты'),
+        types.KeyboardButton('🗑️ Очистить кэш')
+    )
+    keyboard.row(
+        types.KeyboardButton('💎 Подписка'),
+        types.KeyboardButton('📋 Помощь')
+    )
+    return keyboard
+
+
 def check_access(user_id):
     """Checks whether the user has an active subscription."""
     has_access, message = database.check_subscription(user_id)
@@ -1272,20 +1291,7 @@ def send_welcome(message):
         )
 
         # Создаем клавиатуру
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        btn_liked = types.KeyboardButton('🎵 Мне понравилось')
-        btn_search = types.KeyboardButton('🔍 Поиск музыки')
-        btn_youtube = types.KeyboardButton('📺 YouTube')
-        btn_music = types.KeyboardButton('📁 Музыка')
-        btn_podcasts = types.KeyboardButton('🎙️ Подкасты')
-        btn_clear = types.KeyboardButton('🗑️ Очистить кэш')
-        btn_subscribe = types.KeyboardButton('💎 Подписка')
-        btn_help = types.KeyboardButton('📋 Помощь')
-
-        keyboard.row(btn_liked, btn_search)
-        keyboard.row(btn_youtube)
-        keyboard.row(btn_music, btn_podcasts, btn_clear)
-        keyboard.row(btn_subscribe, btn_help)
+        keyboard = build_main_menu_keyboard()
 
         # Проверяем, является ли пользователь администратором
         if user_id in ADMIN_IDS:
@@ -1348,7 +1354,11 @@ def send_welcome(message):
     except Exception as e:
         print(f"[ERROR] Ошибка в обработчике start: {e}")
         traceback.print_exc()
-        bot.reply_to(message, "Добро пожаловать! Используйте кнопки меню для навигации.")
+        bot.reply_to(
+            message,
+            "Добро пожаловать! Используйте кнопки меню для навигации.",
+            reply_markup=build_main_menu_keyboard()
+        )
 
 
 @bot.message_handler(commands=['status', 'check'])
@@ -1834,6 +1844,37 @@ def handle_subscribe_button(message):
 @bot.message_handler(func=lambda message: message.text == '📋 Помощь')
 def handle_help_button(message):
     send_welcome(message)
+
+
+@bot.message_handler(commands=['menu'])
+def handle_menu_command(message):
+    bot.reply_to(
+        message,
+        "Главное меню:",
+        reply_markup=build_main_menu_keyboard()
+    )
+
+
+@bot.message_handler(func=lambda message: bool(message.text))
+def handle_menu_buttons_fallback(message):
+    normalized_text = message.text.strip()
+
+    if 'Мне понравилось' in normalized_text:
+        return handle_liked_button(message)
+    if 'Поиск музыки' in normalized_text:
+        return handle_search_button(message)
+    if 'YouTube' in normalized_text:
+        return handle_youtube_button(message)
+    if 'Музыка' in normalized_text and 'Поиск' not in normalized_text:
+        return handle_music_folder(message)
+    if 'Подкасты' in normalized_text:
+        return handle_podcasts_folder(message)
+    if 'Очистить кэш' in normalized_text:
+        return handle_clear_cache_button(message)
+    if 'Подписка' in normalized_text:
+        return handle_subscribe_button(message)
+    if 'Помощь' in normalized_text:
+        return handle_help_button(message)
 
 
 # ============================================
