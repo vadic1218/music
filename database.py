@@ -2,14 +2,17 @@ import sqlite3
 import os
 import json
 import threading
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, Any, List
 from config import DEFAULT_PROMO_CODES, SUBSCRIPTION_LIMITS, ADMIN_IDS
 
+BASE_DIR = Path(__file__).resolve().parent
+
 
 class Database:
     def __init__(self, db_path='music_bot.db'):
-        self.db_path = db_path
+        self.db_path = str(Path(db_path)) if os.path.isabs(db_path) else str(BASE_DIR / db_path)
         self.lock = threading.RLock()
         self.init_db()
 

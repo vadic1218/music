@@ -1,16 +1,28 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
+
+def _parse_admin_ids(raw_value: str) -> list[int]:
+    admin_ids = []
+    for chunk in raw_value.split(','):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        admin_ids.append(int(chunk))
+    return admin_ids
 
 # Токен бота из BotFather
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '').strip()
 
 # ID администраторов (ваш ID и других админов)
-ADMIN_IDS = list(map(int, os.environ.get('ADMIN_IDS', '123456789').split(',')))
+ADMIN_IDS = _parse_admin_ids(os.environ.get('ADMIN_IDS', '123456789'))
 
 # Токен Яндекс.Музыки (опционально)
-YANDEX_MUSIC_TOKEN = os.environ.get('YANDEX_MUSIC_TOKEN', '')
+YANDEX_MUSIC_TOKEN = os.environ.get('YANDEX_MUSIC_TOKEN', '').strip()
 
 # Настройки кэша
 MAX_FILE_SIZE_MB = 48

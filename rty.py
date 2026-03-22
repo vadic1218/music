@@ -6,7 +6,8 @@
 
 # Импорт библиотек
 import database
-from config import BOT_TOKEN, ADMIN_IDS, MAX_FILE_SIZE_MB, FFMPEG_THREADS
+from pathlib import Path
+from config import BOT_TOKEN, ADMIN_IDS, MAX_FILE_SIZE_MB, FFMPEG_THREADS, YANDEX_MUSIC_TOKEN
 import telebot
 import os
 import yt_dlp
@@ -28,7 +29,12 @@ import traceback
 from datetime import datetime, timedelta
 
 # --- НАСТРОЙКА БОТА ---
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set. Put it into the project .env file before starting the bot.")
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # Проверка базы данных
@@ -54,7 +60,7 @@ except Exception as e:
     traceback.print_exc()
 
 # Инициализация клиента Яндекс.Музыки
-YM_TOKEN = os.environ.get('YANDEX_MUSIC_TOKEN')
+YM_TOKEN = YANDEX_MUSIC_TOKEN
 ym_client = None
 if YM_TOKEN:
     try:
@@ -73,7 +79,7 @@ user_files_state = {}
 ym_client_lock = threading.Lock()
 
 # --- НАСТРОЙКИ ПАПОК ---
-AUDIO_CACHE_DIR = "audio_cache"
+AUDIO_CACHE_DIR = str(BASE_DIR / "audio_cache")
 MUSIC_DIR = os.path.join(AUDIO_CACHE_DIR, "music")
 PODCASTS_DIR = os.path.join(AUDIO_CACHE_DIR, "podcasts")
 
