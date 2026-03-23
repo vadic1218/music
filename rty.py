@@ -402,38 +402,81 @@ def extract_genius_lyrics(page_html):
     return ""
 
 
-def get_lyrics_from_genius(query):
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json",
+def build_genius_headers():
+    return {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/137.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+        "Referer": "https://genius.com/",
+        "Origin": "https://genius.com",
     }
+
+
+def extract_genius_search_hits(page_html):
+    soup = BeautifulSoup(page_html, "html.parser")
+    hits = []
+
+    for link in soup.select('a[href*="genius.com/"][href$="-lyrics"]'):
+        href = link.get("href")
+        if not href:
+            continue
+
+        title = link.get_text(" ", strip=True)
+        if not title:
+            continue
+
+        hits.append((href, title))
+
+    unique_hits = []
+    seen_urls = set()
+    for href, title in hits:
+        if href in seen_urls:
+            continue
+        seen_urls.add(href)
+        unique_hits.append((href, title))
+    return unique_hits
+
+
+def get_lyrics_from_genius(query):
+    headers = build_genius_headers()
     try:
         search_response = requests.get(
-            "https://genius.com/api/search/multi",
+            "https://genius.com/search",
             params={"q": query},
             headers=headers,
             timeout=(10, 30),
         )
         search_response.raise_for_status()
-        payload = search_response.json()
-        sections = payload.get("response", {}).get("sections", [])
 
-        for section in sections:
-            for hit in section.get("hits", []):
-                result = hit.get("result", {})
-                if result.get("type") != "song":
-                    continue
-                song_url = result.get("url")
-                title = result.get("title", query)
-                artist = result.get("primary_artist", {}).get("name", "Unknown Artist")
-                if not song_url:
-                    continue
+        hits = extract_genius_search_hits(search_response.text)
+        for song_url, fallback_title in hits[:10]:
+            page_response = requests.get(song_url, headers=headers, timeout=(10, 30))
+            page_response.raise_for_status()
+            lyrics_text = extract_genius_lyrics(page_response.text)
+            if not lyrics_text:
+                continue
 
-                page_response = requests.get(song_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=(10, 30))
-                page_response.raise_for_status()
-                lyrics_text = extract_genius_lyrics(page_response.text)
-                if lyrics_text:
-                    return lyrics_text, title, artist, "Genius"
+            title = fallback_title
+            artist = "Unknown Artist"
+            page_soup = BeautifulSoup(page_response.text, "html.parser")
+            title_tag = page_soup.find("meta", property="og:title")
+            if title_tag and title_tag.get("content"):
+                meta_title = title_tag["content"].strip()
+                if " Lyrics" in meta_title:
+                    meta_title = meta_title.replace(" Lyrics", "").strip()
+                if " by " in meta_title:
+                    title_part, artist_part = meta_title.split(" by ", 1)
+                    title = title_part.strip() or title
+                    artist = artist_part.strip() or artist
+                else:
+                    title = meta_title or title
+
+            return lyrics_text, title, artist, "Genius"
+
         return None, None, None, "Текст на Genius не найден."
     except Exception as e:
         print(f"[Lyrics] Genius error: {e}")
@@ -671,16 +714,64 @@ def save_chat_library_index(index_data):
                 print(f"[Chat Library] Failed to save chat library index: {e}; fallback failed: {fallback_error}")
 
 
+def normalize_chat_library_tracks(chat_tracks):
+    normalized = {}
+    changed = False
+
+    for raw_key, item in (chat_tracks or {}).items():
+        if not isinstance(item, dict):
+            changed = True
+            continue
+
+        normalized_key = str(raw_key).split(":", 1)[0].strip()
+        if not normalized_key:
+            changed = True
+            continue
+
+        normalized_item = dict(item)
+        normalized_item["track_id"] = normalized_key
+
+        existing = normalized.get(normalized_key)
+        if existing is None:
+            normalized[normalized_key] = normalized_item
+        else:
+            existing_updated_at = str(existing.get("updated_at") or "")
+            candidate_updated_at = str(normalized_item.get("updated_at") or "")
+            if candidate_updated_at >= existing_updated_at:
+                normalized[normalized_key] = normalized_item
+            changed = True
+
+        if normalized_key != str(raw_key):
+            changed = True
+
+    return normalized, changed
+
+
 def get_chat_library_tracks(chat_id):
     index_data = load_chat_library_index()
-    return index_data.setdefault(str(chat_id), {})
+    chat_key = str(chat_id)
+    chat_tracks = index_data.setdefault(chat_key, {})
+    normalized_tracks, changed = normalize_chat_library_tracks(chat_tracks)
+    if changed:
+        index_data[chat_key] = normalized_tracks
+        save_chat_library_index(index_data)
+    return normalized_tracks
 
 
-def update_chat_library_track(chat_id, track_key, message_id, title, performer):
+def update_chat_library_track(chat_id, track_key, message_id, title, performer, album_id=0):
     index_data = load_chat_library_index()
-    chat_tracks = index_data.setdefault(str(chat_id), {})
-    chat_tracks[track_key] = {
+    chat_key = str(chat_id)
+    chat_tracks = index_data.setdefault(chat_key, {})
+    normalized_tracks, changed = normalize_chat_library_tracks(chat_tracks)
+    if changed:
+        chat_tracks = normalized_tracks
+        index_data[chat_key] = chat_tracks
+
+    normalized_key = str(track_key).split(":", 1)[0].strip()
+    chat_tracks[normalized_key] = {
         "message_id": int(message_id),
+        "track_id": normalized_key,
+        "album_id": int(album_id or 0),
         "title": title,
         "performer": performer,
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -690,8 +781,15 @@ def update_chat_library_track(chat_id, track_key, message_id, title, performer):
 
 def remove_chat_library_track(chat_id, track_key):
     index_data = load_chat_library_index()
-    chat_tracks = index_data.setdefault(str(chat_id), {})
-    item = chat_tracks.pop(track_key, None)
+    chat_key = str(chat_id)
+    chat_tracks = index_data.setdefault(chat_key, {})
+    normalized_tracks, changed = normalize_chat_library_tracks(chat_tracks)
+    if changed:
+        chat_tracks = normalized_tracks
+        index_data[chat_key] = chat_tracks
+
+    normalized_key = str(track_key).split(":", 1)[0].strip()
+    item = chat_tracks.pop(normalized_key, None)
     save_chat_library_index(index_data)
     return item
 
@@ -800,7 +898,14 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
                 else:
                     try:
                         message_id = send_track_to_chat_library(chat_id, audio_path, title, performer)
-                        update_chat_library_track(chat_id, track_identity, message_id, title, performer)
+                        update_chat_library_track(
+                            chat_id,
+                            track_identity,
+                            message_id,
+                            title,
+                            performer,
+                            album_id=album_id,
+                        )
                         chat_library_tracks[track_identity] = {
                             "message_id": message_id,
                             "title": title,
