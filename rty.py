@@ -417,6 +417,19 @@ def score_song_match(query, title, artist=""):
     return score
 
 
+def count_song_match_tokens(query, title, artist=""):
+    query_tokens = [token for token in normalize_match_text(query).split() if len(token) > 1]
+    if not query_tokens:
+        return 0
+
+    combined = f"{normalize_match_text(artist)} {normalize_match_text(title)}".strip()
+    matched = 0
+    for token in query_tokens:
+        if token in combined:
+            matched += 1
+    return matched
+
+
 def make_yandex_track_identity(track_id):
     return str(int(track_id))
 
@@ -526,6 +539,14 @@ def get_lyrics_from_genius(query):
                     artist = artist_part.strip() or artist
                 else:
                     title = meta_title or title
+
+            score = score_song_match(query, title, artist)
+            matched_tokens = count_song_match_tokens(query, title, artist)
+            query_tokens = [token for token in normalize_match_text(query).split() if len(token) > 1]
+            min_matches = 1 if len(query_tokens) <= 2 else 2
+
+            if matched_tokens < min_matches or score < 40:
+                continue
 
             return lyrics_text, title, artist, "Genius"
 
@@ -686,24 +707,27 @@ def resolve_cached_yandex_track(track_id, album_id):
     cache_key = make_yandex_cache_key(track_id, album_id)
     index_data = load_yandex_cache_index()
     item = index_data.get(cache_key)
-
-    if not item:
-        return None, None
-
-    file_path = item.get("path")
-    if file_path and os.path.exists(file_path):
-        return file_path, item
+    if item:
+        file_path = item.get("path")
+        if file_path and os.path.exists(file_path):
+            return file_path, item
 
     track_identity = make_yandex_track_identity(track_id)
+    stale_keys = []
     for existing_key, existing_item in list(index_data.items()):
         if str(existing_item.get("track_id")) != track_identity:
             continue
         existing_path = existing_item.get("path")
         if existing_path and os.path.exists(existing_path):
             return existing_path, existing_item
+        stale_keys.append(existing_key)
 
-    index_data.pop(cache_key, None)
-    save_yandex_cache_index(index_data)
+    if item and cache_key not in stale_keys:
+        stale_keys.append(cache_key)
+    if stale_keys:
+        for stale_key in stale_keys:
+            index_data.pop(stale_key, None)
+        save_yandex_cache_index(index_data)
     return None, None
 
 
@@ -2517,7 +2541,7 @@ def send_welcome(message):
         if user_id in ADMIN_IDS:
             admin_text = "⚡ *Вы администратор!* Вам доступны все функции бота!"
             welcome_text = (
-                f"🎵 *Привет, Администратор {first_name or 'друг'}!*\n\n"
+                f"🎵 *Привет, Администратор {safe_first_name or 'друг'}!*\n\n"
                 f"{admin_text}\n\n"
                 "*Добро пожаловать в универсальный музыкальный бот!*\n\n"
 
@@ -2540,7 +2564,7 @@ def send_welcome(message):
             )
         else:
             welcome_text = (
-                f"🎵 *Привет, {first_name or 'друг'}!*\n\n"
+                f"🎵 *Привет, {safe_first_name or 'друг'}!*\n\n"
                 "*Добро пожаловать в универсальный музыкальный бот!*\n\n"
 
                 "⚡ *Что умеет бот:*\n"
@@ -2559,8 +2583,6 @@ def send_welcome(message):
                 "🚀 *Начните с поиска музыки!*"
             )
 
-        if first_name:
-            welcome_text = welcome_text.replace(first_name, safe_first_name, 1)
         bot.reply_to(message, welcome_text, parse_mode='Markdown',
                      disable_web_page_preview=True, reply_markup=keyboard)
 
