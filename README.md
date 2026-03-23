@@ -17,8 +17,6 @@ Optional variables:
 - `VK_PASSWORD`
 - `VK_ACCESS_TOKEN`
 - `SEARCH_RESULTS_PER_SOURCE=50`
-- `OPENAI_API_KEY`
-- `OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe`
 - `DATA_DIR=/data`
 - `CACHE_DIR=/data/audio_cache`
 
@@ -40,13 +38,13 @@ VK search works through one dedicated technical VK account that belongs to the b
 - When enabled, VK appears as a third source next to Yandex and YouTube
 - Use `/search_vk <query>` for VK-only search or plain text for combined search
 
-## Speech Transcription
+## Lyrics
 
-The bot can transcribe speech from Telegram voice messages when `OPENAI_API_KEY` is configured.
+The bot can search for song lyrics by title.
 
-- Intended for speech and voice messages
-- Not intended to output full song lyrics
-- Default model: `gpt-4o-mini-transcribe`
+- First tries Yandex Music
+- Falls back to Genius if Yandex has no lyrics
+- Use `/lyrics <query>` or send `текст <query>`
 
 The repository includes:
 

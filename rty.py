@@ -37,7 +37,7 @@ import shutil
 from dotenv import load_dotenv
 from urllib.parse import urlparse, parse_qs, quote, unquote, urlencode, urlunparse
 from yandex_music import Client
-from yandex_music.exceptions import UnauthorizedError, NetworkError
+from yandex_music.exceptions import UnauthorizedError, NetworkError, NotFoundError
 import subprocess
 import math
 from telebot import types
@@ -46,6 +46,7 @@ from datetime import datetime, timedelta, timezone
 import vk_api
 from vk_api.audio import VkAudio
 from vk_api.exceptions import AuthError
+from bs4 import BeautifulSoup
 
 # --- НАСТРОЙКА БОТА ---
 BASE_DIR = Path(__file__).resolve().parent
@@ -324,6 +325,113 @@ def build_transcription_keyboard(token):
     return markup
 
 
+def make_yandex_track_identity(track_id):
+    return str(int(track_id))
+
+
+def format_lyrics_text(title, artist, lyrics_text, source_name):
+    text = (lyrics_text or "").strip()
+    if len(text) > 3500:
+        text = text[:3500].rstrip() + "\n\n…текст сокращен."
+    return (
+        f"📝 *Текст песни*\n\n"
+        f"🎵 *{escape_markdown(title)}*\n"
+        f"👤 *{escape_markdown(artist)}*\n"
+        f"📚 Источник: *{escape_markdown(source_name)}*\n\n"
+        f"{escape_markdown(text)}"
+    )
+
+
+def extract_genius_lyrics(page_html):
+    soup = BeautifulSoup(page_html, "html.parser")
+    containers = soup.select('[data-lyrics-container="true"]')
+    if containers:
+        parts = [container.get_text("\n", strip=True) for container in containers]
+        return "\n".join(part for part in parts if part).strip()
+
+    legacy_container = soup.select_one("div.lyrics")
+    if legacy_container:
+        return legacy_container.get_text("\n", strip=True).strip()
+
+    return ""
+
+
+def get_lyrics_from_genius(query):
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
+    try:
+        search_response = requests.get(
+            "https://genius.com/api/search/multi",
+            params={"q": query},
+            headers=headers,
+            timeout=(10, 30),
+        )
+        search_response.raise_for_status()
+        payload = search_response.json()
+        sections = payload.get("response", {}).get("sections", [])
+
+        for section in sections:
+            for hit in section.get("hits", []):
+                result = hit.get("result", {})
+                if result.get("type") != "song":
+                    continue
+                song_url = result.get("url")
+                title = result.get("title", query)
+                artist = result.get("primary_artist", {}).get("name", "Unknown Artist")
+                if not song_url:
+                    continue
+
+                page_response = requests.get(song_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=(10, 30))
+                page_response.raise_for_status()
+                lyrics_text = extract_genius_lyrics(page_response.text)
+                if lyrics_text:
+                    return lyrics_text, title, artist, "Genius"
+        return None, None, None, "Текст на Genius не найден."
+    except Exception as e:
+        print(f"[Lyrics] Genius error: {e}")
+        return None, None, None, f"Genius error: {e}"
+
+
+def get_lyrics_from_yandex(query):
+    if not ym_client:
+        return None, None, None, "Яндекс.Музыка не настроена."
+
+    candidates = search_yandex_music(query, limit=10)
+    for candidate in candidates:
+        try:
+            lyrics_meta = ym_client.tracks_lyrics(candidate["track_id"], format="TEXT")
+            if not lyrics_meta:
+                continue
+            lyrics_text = lyrics_meta.fetch_lyrics().strip()
+            if lyrics_text:
+                return lyrics_text, candidate["title"], candidate["artists"], "Яндекс.Музыка"
+        except NotFoundError:
+            continue
+        except Exception as e:
+            print(f"[Lyrics] Yandex lyrics error for {candidate.get('track_id')}: {e}")
+            continue
+
+    return None, None, None, "Текст в Яндекс.Музыке не найден."
+
+
+def get_song_lyrics(query):
+    lyrics_text, title, artist, source_name = get_lyrics_from_yandex(query)
+    if lyrics_text:
+        return lyrics_text, title, artist, source_name
+
+    lyrics_text, title, artist, source_name = get_lyrics_from_genius(query)
+    if lyrics_text:
+        return lyrics_text, title, artist, source_name
+
+    return None, None, None, "Текст песни не найден ни в Яндекс.Музыке, ни в Genius."
+
+
+def send_lyrics_lookup(message, query):
+    send_lyrics_lookup(message, query)
+
+
 def make_yandex_cache_key(track_id, album_id):
     return f"{int(track_id)}:{int(album_id or 0)}"
 
@@ -367,6 +475,14 @@ def resolve_cached_yandex_track(track_id, album_id):
     if file_path and os.path.exists(file_path):
         return file_path, item
 
+    track_identity = make_yandex_track_identity(track_id)
+    for existing_key, existing_item in list(index_data.items()):
+        if str(existing_item.get("track_id")) != track_identity:
+            continue
+        existing_path = existing_item.get("path")
+        if existing_path and os.path.exists(existing_path):
+            return existing_path, existing_item
+
     index_data.pop(cache_key, None)
     save_yandex_cache_index(index_data)
     return None, None
@@ -375,6 +491,12 @@ def resolve_cached_yandex_track(track_id, album_id):
 def update_yandex_cache_entry(track_id, album_id, file_path, title, performer, duration_seconds=0, liked_synced=False):
     cache_key = make_yandex_cache_key(track_id, album_id)
     index_data = load_yandex_cache_index()
+    track_identity = make_yandex_track_identity(track_id)
+    for existing_key, existing_item in list(index_data.items()):
+        if existing_key == cache_key:
+            continue
+        if str(existing_item.get("track_id")) == track_identity:
+            index_data.pop(existing_key, None)
     index_data[cache_key] = {
         "track_id": int(track_id),
         "album_id": int(album_id or 0),
@@ -512,7 +634,7 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
             removed_from_chat=0,
         )
 
-    current_keys = set()
+    current_track_ids = set()
     downloaded = 0
     reused = 0
     failed = []
@@ -525,7 +647,8 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
         try:
             album_id = track.albums[0].id if track.albums else 0
             cache_key = make_yandex_cache_key(track.id, album_id)
-            current_keys.add(cache_key)
+            track_identity = make_yandex_track_identity(track.id)
+            current_track_ids.add(track_identity)
             performer = ", ".join(a.name for a in track.artists) if track.artists else "Unknown Artist"
             duration_seconds = (track.duration_ms or 0) / 1000 if hasattr(track, "duration_ms") else 0
 
@@ -552,14 +675,14 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
                     audio_path = None
 
             if audio_path and chat_id is not None:
-                existing_chat_item = chat_library_tracks.get(cache_key)
+                existing_chat_item = chat_library_tracks.get(track_identity)
                 if existing_chat_item and existing_chat_item.get("message_id"):
                     already_in_chat += 1
                 else:
                     try:
                         message_id = send_track_to_chat_library(chat_id, audio_path, title, performer)
-                        update_chat_library_track(chat_id, cache_key, message_id, title, performer)
-                        chat_library_tracks[cache_key] = {
+                        update_chat_library_track(chat_id, track_identity, message_id, title, performer)
+                        chat_library_tracks[track_identity] = {
                             "message_id": message_id,
                             "title": title,
                             "performer": performer,
@@ -589,14 +712,14 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
     for cache_key, item in list(index_data.items()):
         if not item.get("liked_synced"):
             continue
-        if cache_key in current_keys:
+        if str(item.get("track_id")) in current_track_ids:
             continue
         remove_yandex_cache_entry(item["track_id"], item.get("album_id", 0), delete_file=True)
         removed += 1
 
     if chat_id is not None:
         for track_key, item in list(get_chat_library_tracks(chat_id).items()):
-            if track_key in current_keys:
+            if track_key in current_track_ids:
                 continue
             removed_item = remove_chat_library_track(chat_id, track_key)
             if removed_item and removed_item.get("message_id"):
@@ -807,7 +930,7 @@ def build_main_menu_keyboard():
     )
     keyboard.row(
         types.KeyboardButton('💎 Подписка'),
-        types.KeyboardButton('📝 Расшифровка')
+        types.KeyboardButton('📝 Текст песни')
     )
     keyboard.row(types.KeyboardButton('📋 Помощь'))
     if ENABLE_VK:
@@ -842,7 +965,7 @@ def is_menu_button_text(text):
         'Подкасты',
         'Очистить кэш',
         'Подписка',
-        'Расшифровка',
+        'Текст песни',
         'Помощь',
     ]
     if ENABLE_VK:
@@ -2113,7 +2236,7 @@ def send_welcome(message):
         # Создаем клавиатуру
         keyboard = build_main_menu_keyboard()
         vk_feature_text = "• 🎧 *VK Music* - поиск и скачивание треков через VK\n" if ENABLE_VK else ""
-        transcription_feature_text = "• 📝 *Расшифровка речи* - перевод голосовых сообщений в текст\n" if TRANSCRIPTION_ENABLED else ""
+        lyrics_feature_text = "• 📝 *Текст песни* - поиск текста через Яндекс.Музыку и Genius\n"
 
         # Проверяем, является ли пользователь администратором
         if user_id in ADMIN_IDS:
@@ -2128,7 +2251,7 @@ def send_welcome(message):
                 "• 🎵 *Яндекс.Музыка* - поиск и скачивание треков\n"
                 "• 📺 *YouTube* - скачивание музыки с YouTube\n"
                 f"{vk_feature_text}"
-                f"{transcription_feature_text}"
+                f"{lyrics_feature_text}"
                 "• 💎 *PREMIUM подписка* - 49₽/месяц для пользователей\n\n"
 
                 "📋 *Основные команды:*\n"
@@ -2150,7 +2273,7 @@ def send_welcome(message):
                 "• 🎵 *Яндекс.Музыка* - поиск и скачивание треков\n"
                 "• 📺 *YouTube* - скачивание музыки с YouTube\n"
                 f"{vk_feature_text}"
-                f"{transcription_feature_text}"
+                f"{lyrics_feature_text}"
                 "• 💎 *PREMIUM подписка* - 49₽/месяц\n\n"
 
                 "📋 *Основные команды:*\n"
@@ -2209,10 +2332,7 @@ def handle_status(message):
         else:
             status_text += "⚠️  *VK Music*: Не настроен\n"
 
-    if TRANSCRIPTION_ENABLED:
-        status_text += f"✅ *Расшифровка речи*: Модель `{OPENAI_TRANSCRIBE_MODEL}`\n"
-    else:
-        status_text += "⚠️  *Расшифровка речи*: Не настроена\n"
+    status_text += "✅ *Текст песни*: Яндекс.Музыка -> Genius\n"
 
     music_files = len(get_folder_files(MUSIC_DIR))
     podcast_files = len(get_folder_files(PODCASTS_DIR))
@@ -2775,15 +2895,52 @@ def handle_subscribe_button(message):
     handle_subscribe(message)
 
 
-@bot.message_handler(func=lambda message: message.text == '📝 Расшифровка')
-def handle_transcription_button(message):
+@bot.message_handler(commands=['lyrics'])
+def handle_lyrics_command(message):
+    has_access, _ = ensure_subscription_access(message.from_user.id, message.chat.id, reply_target=message)
+    if not has_access:
+        return
+
+    query = message.text.replace('/lyrics', '', 1).strip()
+    if not query:
+        bot.reply_to(
+            message,
+            "📝 *Текст песни*\n\n"
+            "Использование:\n"
+            "`/lyrics название песни`\n\n"
+            "Или просто напишите:\n"
+            "`текст название песни`",
+            parse_mode='Markdown'
+        )
+        return
+
+    wait_msg = bot.reply_to(message, f"📝 Ищу текст песни: *{escape_markdown(query)}*...", parse_mode='Markdown')
+    lyrics_text, title, artist, source_name = get_song_lyrics(query)
+    if not lyrics_text:
+        bot.edit_message_text(
+            f"❌ {source_name}",
+            chat_id=message.chat.id,
+            message_id=wait_msg.message_id,
+        )
+        return
+
+    bot.edit_message_text(
+        format_lyrics_text(title, artist, lyrics_text, source_name),
+        chat_id=message.chat.id,
+        message_id=wait_msg.message_id,
+        parse_mode='Markdown'
+    )
+
+
+@bot.message_handler(func=lambda message: message.text == '📝 Текст песни')
+def handle_lyrics_button(message):
     bot.reply_to(
         message,
-        "📝 *Расшифровка речи*\n\n"
-        "Пришлите голосовое сообщение, и бот попробует перевести речь в текст.\n\n"
-        "Важно:\n"
-        "• функция предназначена для речи, а не для полного текста песен\n"
-        "• большие файлы и музыка без четкой речи могут распознаваться плохо",
+        "📝 *Текст песни*\n\n"
+        "Отправьте:\n"
+        "• `/lyrics название песни`\n"
+        "• или `текст название песни`\n\n"
+        "Сначала бот ищет текст в Яндекс.Музыке, если там не находит, пробует Genius.",
         parse_mode='Markdown'
     )
 
@@ -2822,8 +2979,8 @@ def handle_menu_buttons_fallback(message):
         return handle_clear_cache_button(message)
     if 'Подписка' in normalized_text:
         return handle_subscribe_button(message)
-    if 'Расшифровка' in normalized_text:
-        return handle_transcription_button(message)
+    if 'Текст песни' in normalized_text:
+        return handle_lyrics_button(message)
     if 'Помощь' in normalized_text:
         return handle_help_button(message)
 
@@ -2833,63 +2990,13 @@ def handle_menu_buttons_fallback(message):
 # ============================================
 
 @bot.message_handler(content_types=['voice'])
-def handle_voice_transcription(message):
-    if not transcription_is_available():
-        bot.reply_to(
-            message,
-            "📝 Расшифровка речи пока не настроена. Добавьте `OPENAI_API_KEY` в переменные окружения.",
-        )
-        return
-
-    has_access, _ = ensure_subscription_access(message.from_user.id, message.chat.id, reply_target=message)
-    if not has_access:
-        return
-
-    token = register_transcription_request(
-        message,
-        media_type="voice",
-        file_id=message.voice.file_id,
-        filename_hint=f"voice_{message.message_id}.ogg",
-    )
-    bot.reply_to(
-        message,
-        "📝 Голосовое получено. Нажмите кнопку ниже, чтобы запустить расшифровку.",
-        reply_markup=build_transcription_keyboard(token),
-    )
+def handle_voice_passthrough(message):
+    return
 
 
 @bot.message_handler(content_types=['audio', 'document'])
-def handle_audio_transcription_guard(message):
-    if message.content_type == 'document':
-        mime_type = getattr(message.document, 'mime_type', '') or ''
-        if not mime_type.startswith('audio/'):
-            return
-        file_id = message.document.file_id
-        filename_hint = message.document.file_name or f"document_{message.message_id}.bin"
-        duration = 0
-    else:
-        file_id = message.audio.file_id
-        filename_hint = message.audio.file_name or f"audio_{message.message_id}.mp3"
-        duration = getattr(message.audio, 'duration', 0) or 0
-
-    if duration and duration > 1800:
-        bot.reply_to(
-            message,
-            "📝 Файл слишком длинный для быстрой расшифровки. Пришлите более короткий фрагмент с речью.",
-        )
-        return
-
-    token = register_transcription_request(
-        message,
-        media_type=message.content_type,
-        file_id=file_id,
-        filename_hint=filename_hint,
-    )
-    bot.reply_to(
-        message,
-        "📝 Аудио получено. Если там есть речь, нажмите кнопку ниже для расшифровки.",
-        reply_markup=build_transcription_keyboard(token),
-    )
+def handle_audio_passthrough(message):
+    return
 
 
 # ============================================
@@ -2907,7 +3014,7 @@ def handle_auto_search(message):
         button_texts = [
             '🎵 Мне понравилось', '🔍 Поиск музыки',
             '📁 Музыка', '🎙️ Подкасты', '🗑️ Очистить кэш',
-            '💎 Подписка', '📝 Расшифровка', '📋 Помощь'
+            '💎 Подписка', '📝 Текст песни', '📋 Помощь'
         ]
         if ENABLE_VK:
             button_texts.append('🎧 VK')
@@ -2925,6 +3032,10 @@ def handle_auto_search(message):
         if len(query) > 100:
             bot.reply_to(message, "❌ Запрос слишком длинный. Пожалуйста, укажите более короткое название.")
             return
+
+        lowered_query = query.lower()
+        if lowered_query.startswith('текст '):
+            return send_lyrics_lookup(message, query[6:].strip())
 
         if query.lower() in ['поиск', 'search', 'искать', 'музыка', 'песня']:
             return
@@ -2984,64 +3095,12 @@ def handle_callback(call):
             return
 
         elif data.startswith("transcribe_"):
-            token = data.replace("transcribe_", "", 1)
-            request_data = pending_transcription_requests.get(token)
-            if not request_data:
-                safe_edit_message_text(
-                    "❌ Запрос на расшифровку уже устарел. Отправьте аудио заново.",
-                    chat_id=chat_id,
-                    message_id=message_id,
-                )
-                return
-
-            if request_data["user_id"] != call.from_user.id:
-                bot.answer_callback_query(call.id, "Эта кнопка доступна только отправителю аудио.")
-                return
-
-            has_access, _ = ensure_subscription_access(call.from_user.id, chat_id)
-            if not has_access:
-                return
-
-            temp_path = None
-            try:
-                safe_edit_message_text(
-                    "📝 Расшифровываю аудио. Для длинных сообщений это может занять некоторое время...",
-                    chat_id=chat_id,
-                    message_id=message_id,
-                )
-                temp_path = save_telegram_file_locally(
-                    request_data["file_id"],
-                    request_data["filename_hint"],
-                )
-                text, error = transcribe_audio_with_chunking(temp_path)
-                if error:
-                    safe_edit_message_text(
-                        f"❌ {error}",
-                        chat_id=chat_id,
-                        message_id=message_id,
-                    )
-                    return
-
-                safe_edit_message_text(
-                    format_transcription_text(text),
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    parse_mode='Markdown',
-                )
-            except Exception as e:
-                print(f"[Transcription] Callback error: {e}")
-                safe_edit_message_text(
-                    "❌ Не удалось расшифровать это аудио.",
-                    chat_id=chat_id,
-                    message_id=message_id,
-                )
-            finally:
-                pending_transcription_requests.pop(token, None)
-                if temp_path and temp_path.exists():
-                    try:
-                        temp_path.unlink()
-                    except OSError:
-                        pass
+            safe_edit_message_text(
+                "📝 Функция расшифровки убрана. Используйте раздел *Текст песни* для поиска текста по названию.",
+                chat_id=chat_id,
+                message_id=message_id,
+                parse_mode='Markdown',
+            )
             return
 
         elif data == "back_to_menu":
