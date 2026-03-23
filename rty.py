@@ -500,18 +500,46 @@ def extract_genius_search_hits(page_html):
     return unique_hits
 
 
+def search_genius_urls_via_duckduckgo(query):
+    headers = {
+        "User-Agent": build_genius_headers()["User-Agent"],
+        "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+    }
+    response = requests.get(
+        "https://html.duckduckgo.com/html/",
+        params={"q": f"site:genius.com {query} lyrics"},
+        headers=headers,
+        timeout=(10, 30),
+    )
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    hits = []
+    for link in soup.select("a.result__a"):
+        href = link.get("href")
+        title = link.get_text(" ", strip=True)
+        if not href or "genius.com" not in href or not href.endswith("-lyrics"):
+            continue
+        hits.append((href, title))
+    return hits
+
+
 def get_lyrics_from_genius(query):
     headers = build_genius_headers()
     try:
-        search_response = requests.get(
-            "https://genius.com/search",
-            params={"q": query},
-            headers=headers,
-            timeout=(10, 30),
-        )
-        search_response.raise_for_status()
+        try:
+            search_response = requests.get(
+                "https://genius.com/search",
+                params={"q": query},
+                headers=headers,
+                timeout=(10, 30),
+            )
+            search_response.raise_for_status()
+            hits = extract_genius_search_hits(search_response.text)
+        except Exception as search_error:
+            print(f"[Lyrics] Genius direct search failed, fallback to DuckDuckGo: {search_error}")
+            hits = search_genius_urls_via_duckduckgo(query)
 
-        hits = extract_genius_search_hits(search_response.text)
         ranked_hits = sorted(
             hits,
             key=lambda item: score_song_match(query, item[1], item[0].replace("https://genius.com/", "").replace("-lyrics", "").replace("-", " ")),
@@ -728,13 +756,33 @@ def resolve_cached_yandex_track(track_id, album_id):
         for stale_key in stale_keys:
             index_data.pop(stale_key, None)
         save_yandex_cache_index(index_data)
+
+    file_pattern = f"ym_{int(track_id)}_*.mp3"
+    for search_dir in (MUSIC_DIR, PODCASTS_DIR):
+        try:
+            matches = sorted(Path(search_dir).glob(file_pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+        except OSError:
+            matches = []
+        for match in matches:
+            if not match.exists():
+                continue
+            synthetic_item = {
+                "track_id": int(track_id),
+                "album_id": int(album_id or 0),
+                "path": str(match),
+                "liked_synced": True,
+                "chat_sent": True,
+            }
+            return str(match), synthetic_item
+
     return None, None
 
 
-def update_yandex_cache_entry(track_id, album_id, file_path, title, performer, duration_seconds=0, liked_synced=False):
+def update_yandex_cache_entry(track_id, album_id, file_path, title, performer, duration_seconds=0, liked_synced=False, chat_sent=None):
     cache_key = make_yandex_cache_key(track_id, album_id)
     index_data = load_yandex_cache_index()
     track_identity = make_yandex_track_identity(track_id)
+    previous_item = index_data.get(cache_key, {})
     for existing_key, existing_item in list(index_data.items()):
         if existing_key == cache_key:
             continue
@@ -748,6 +796,7 @@ def update_yandex_cache_entry(track_id, album_id, file_path, title, performer, d
         "performer": performer,
         "duration_seconds": duration_seconds or 0,
         "liked_synced": bool(liked_synced),
+        "chat_sent": previous_item.get("chat_sent") if chat_sent is None else bool(chat_sent),
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     save_yandex_cache_index(index_data)
@@ -959,7 +1008,8 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
                     track.title,
                     performer,
                     duration_seconds,
-                    liked_synced=True
+                    liked_synced=True,
+                    chat_sent=(cache_item or {}).get("chat_sent")
                 )
                 audio_path = cached_path
                 title = track.title
@@ -976,6 +1026,28 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
                 existing_chat_item = chat_library_tracks.get(track_identity)
                 if existing_chat_item and existing_chat_item.get("message_id"):
                     already_in_chat += 1
+                    update_yandex_cache_entry(
+                        track.id,
+                        album_id,
+                        audio_path,
+                        title,
+                        performer,
+                        duration_seconds,
+                        liked_synced=True,
+                        chat_sent=True,
+                    )
+                elif cache_item and (cache_item.get("chat_sent") or cache_item.get("liked_synced")):
+                    already_in_chat += 1
+                    update_yandex_cache_entry(
+                        track.id,
+                        album_id,
+                        audio_path,
+                        title,
+                        performer,
+                        duration_seconds,
+                        liked_synced=True,
+                        chat_sent=True,
+                    )
                 else:
                     try:
                         message_id = send_track_to_chat_library(chat_id, audio_path, title, performer)
@@ -986,6 +1058,16 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
                             title,
                             performer,
                             album_id=album_id,
+                        )
+                        update_yandex_cache_entry(
+                            track.id,
+                            album_id,
+                            audio_path,
+                            title,
+                            performer,
+                            duration_seconds,
+                            liked_synced=True,
+                            chat_sent=True,
                         )
                         chat_library_tracks[track_identity] = {
                             "message_id": message_id,
