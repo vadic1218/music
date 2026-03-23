@@ -152,6 +152,7 @@ os.makedirs(TRANSCRIPTIONS_DIR, exist_ok=True)
 
 YANDEX_CACHE_INDEX_PATH = Path(DATA_DIR) / "yandex_cache_index.json"
 YANDEX_CHAT_LIBRARY_INDEX_PATH = Path(DATA_DIR) / "yandex_chat_library_index.json"
+YANDEX_LIKED_SYNC_STATE_PATH = Path(DATA_DIR) / "yandex_liked_sync_state.json"
 
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
@@ -731,6 +732,48 @@ def save_yandex_cache_index(index_data):
                 print(f"[Yandex Cache] Failed to save cache index: {e}; fallback failed: {fallback_error}")
 
 
+def load_yandex_liked_sync_state():
+    try:
+        if not YANDEX_LIKED_SYNC_STATE_PATH.exists():
+            return {"synced_track_ids": [], "last_synced_at": None, "bootstrapped": False}
+        raw_data = json.loads(YANDEX_LIKED_SYNC_STATE_PATH.read_text(encoding="utf-8"))
+        if not isinstance(raw_data, dict):
+            return {"synced_track_ids": [], "last_synced_at": None, "bootstrapped": False}
+        raw_data.setdefault("synced_track_ids", [])
+        raw_data.setdefault("last_synced_at", None)
+        raw_data.setdefault("bootstrapped", False)
+        return raw_data
+    except Exception as e:
+        print(f"[Yandex Likes] Failed to load sync state: {e}")
+        return {"synced_track_ids": [], "last_synced_at": None, "bootstrapped": False}
+
+
+def save_yandex_liked_sync_state(sync_state):
+    try:
+        payload = json.dumps(sync_state, ensure_ascii=False, indent=2)
+        temp_path = YANDEX_LIKED_SYNC_STATE_PATH.with_suffix(".tmp")
+        temp_path.write_text(payload, encoding="utf-8")
+        temp_path.replace(YANDEX_LIKED_SYNC_STATE_PATH)
+    except Exception as e:
+        try:
+            YANDEX_LIKED_SYNC_STATE_PATH.write_text(
+                json.dumps(sync_state, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as fallback_error:
+            print(f"[Yandex Likes] Failed to save sync state: {e}; fallback failed: {fallback_error}")
+
+
+def count_existing_cached_audio_files():
+    total = 0
+    for folder in (MUSIC_DIR, PODCASTS_DIR):
+        try:
+            total += sum(1 for path in Path(folder).glob("*.mp3") if path.is_file())
+        except OSError:
+            continue
+    return total
+
+
 def resolve_cached_yandex_track(track_id, album_id):
     cache_key = make_yandex_cache_key(track_id, album_id)
     index_data = load_yandex_cache_index()
@@ -967,6 +1010,37 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
 
     total_tracks = len(tracks)
     print(f"[Yandex Likes] Sync started: total={total_tracks}, chat_id={chat_id}")
+    sync_state = load_yandex_liked_sync_state()
+    synced_track_ids = {str(track_id) for track_id in sync_state.get("synced_track_ids", [])}
+    current_track_ids = {
+        make_yandex_track_identity(track.id)
+        for track in tracks
+        if track and getattr(track, "id", None) is not None
+    }
+
+    if not synced_track_ids and count_existing_cached_audio_files() > 0:
+        sync_state["synced_track_ids"] = sorted(current_track_ids)
+        sync_state["last_synced_at"] = datetime.now(timezone.utc).isoformat()
+        sync_state["bootstrapped"] = True
+        save_yandex_liked_sync_state(sync_state)
+        print(f"[Yandex Likes] Bootstrapped sync state with {len(current_track_ids)} track ids")
+        return {
+            "success": True,
+            "message": (
+                "Состояние лайков восстановлено из уже существующей медиатеки.\n"
+                "Текущие треки помечены как уже синхронизированные. "
+                "Следующие запуски будут докачивать только новые песни."
+            ),
+            "downloaded": 0,
+            "reused": len(current_track_ids),
+            "removed": 0,
+            "failed": [],
+            "tracks": tracks,
+            "sent_to_chat": 0,
+            "already_in_chat": len(current_track_ids),
+            "removed_from_chat": 0,
+        }
+
     if progress_callback:
         progress_callback(
             "start",
@@ -981,7 +1055,6 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
             removed_from_chat=0,
         )
 
-    current_track_ids = set()
     downloaded = 0
     reused = 0
     failed = []
@@ -995,7 +1068,6 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
             album_id = track.albums[0].id if track.albums else 0
             cache_key = make_yandex_cache_key(track.id, album_id)
             track_identity = make_yandex_track_identity(track.id)
-            current_track_ids.add(track_identity)
             performer = ", ".join(a.name for a in track.artists) if track.artists else "Unknown Artist"
             duration_seconds = (track.duration_ms or 0) / 1000 if hasattr(track, "duration_ms") else 0
 
@@ -1012,6 +1084,10 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
                     chat_sent=(cache_item or {}).get("chat_sent")
                 )
                 audio_path = cached_path
+                title = track.title
+                reused += 1
+            elif track_identity in synced_track_ids:
+                audio_path = None
                 title = track.title
                 reused += 1
             else:
@@ -1077,6 +1153,8 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
                         sent_to_chat += 1
                     except Exception as e:
                         failed.append(f"{track.title}: не удалось сохранить в чат ({e})")
+
+            synced_track_ids.add(track_identity)
         except Exception as e:
             failed.append(f"{getattr(track, 'title', 'Unknown track')}: {e}")
 
@@ -1121,6 +1199,9 @@ def sync_yandex_liked_tracks(chat_id=None, progress_callback=None):
         f"downloaded={downloaded}, reused={reused}, removed={removed}, failed={len(failed)}, "
         f"sent_to_chat={sent_to_chat}, already_in_chat={already_in_chat}, removed_from_chat={removed_from_chat}"
     )
+    sync_state["synced_track_ids"] = sorted(current_track_ids)
+    sync_state["last_synced_at"] = datetime.now(timezone.utc).isoformat()
+    save_yandex_liked_sync_state(sync_state)
     if progress_callback:
         progress_callback(
             "cleanup",
