@@ -127,6 +127,7 @@ elif not ENABLE_VK:
 user_search_history = {}
 user_files_state = {}
 pending_transcription_requests = {}
+pending_user_actions = {}
 ym_client_lock = threading.Lock()
 yandex_cache_index_lock = threading.RLock()
 chat_library_index_lock = threading.RLock()
@@ -323,6 +324,21 @@ def build_transcription_keyboard(token):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("📝 Расшифровать", callback_data=f"transcribe_{token}"))
     return markup
+
+
+def set_pending_action(chat_id, user_id, action_name):
+    pending_user_actions[(chat_id, user_id)] = {
+        "action": action_name,
+        "created_at": time.time(),
+    }
+
+
+def pop_pending_action(chat_id, user_id):
+    return pending_user_actions.pop((chat_id, user_id), None)
+
+
+def get_pending_action(chat_id, user_id):
+    return pending_user_actions.get((chat_id, user_id))
 
 
 def make_yandex_track_identity(track_id):
@@ -1420,15 +1436,12 @@ def search_youtube_music(query, limit=SEARCH_RESULTS_PER_SOURCE):
     try:
         print(f"[YouTube Search] Поиск: '{query}'")
 
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
+        ydl_opts = build_ytdlp_base_options()
+        ydl_opts.update({
             'extract_flat': True,
             'default_search': 'ytsearch',
             'noplaylist': True,
-            'ignoreerrors': True,
-            'geo_bypass': True,
-        }
+        })
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             search_string = f"ytsearch{limit}:{query}"
@@ -1662,11 +1675,10 @@ def download_from_youtube_fast(query, is_url=False):
             print("[YouTube] Получена ссылка на плейлист, извлекаю первое видео...")
             query = extract_video_from_playlist(query)
 
-        ydl_info_opts = {
-            'quiet': True,
-            'no_warnings': True,
+        ydl_info_opts = build_ytdlp_base_options()
+        ydl_info_opts.update({
             'extract_flat': False,
-        }
+        })
 
         with yt_dlp.YoutubeDL(ydl_info_opts) as ydl:
             info = ydl.extract_info(query, download=False)
@@ -1695,16 +1707,14 @@ def download_from_youtube_fast(query, is_url=False):
             target_dir = get_target_folder(duration_int)
             os.makedirs(target_dir, exist_ok=True)
 
-            ydl_opts = {
-                'format': 'bestaudio/best',
+            ydl_opts = build_ytdlp_base_options()
+            ydl_opts.update({
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
                 'outtmpl': os.path.join(target_dir, f'%(id)s.%(ext)s'),
-                'quiet': True,
-                'no_warnings': True,
                 'socket_timeout': 60,
                 'retries': 10,
                 'fragment_retries': 10,
                 'extractor_retries': 3,
-                'ignoreerrors': True,
                 'nooverwrites': True,
                 'continuedl': True,
                 'noprogress': True,
@@ -1715,11 +1725,9 @@ def download_from_youtube_fast(query, is_url=False):
                 }],
                 'default_search': 'ytsearch1:' if not is_url else None,
                 'noplaylist': True,
-                'nocheckcertificate': True,
-                'geo_bypass': True,
                 'sleep_interval': 1,
                 'max_sleep_interval': 5,
-            }
+            })
 
             if duration_int > 7200:
                 ydl_opts.update({
@@ -2833,6 +2841,26 @@ def handle_vk_button(message):
     )
 
 
+def build_ytdlp_base_options():
+    return {
+        'quiet': True,
+        'no_warnings': True,
+        'ignoreerrors': True,
+        'geo_bypass': True,
+        'nocheckcertificate': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        },
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web'],
+                'player_skip': ['configs', 'webpage'],
+            }
+        },
+    }
+
+
 @bot.message_handler(func=lambda message: message.text == '📁 Музыка')
 def handle_music_folder(message):
     """Показывает список музыкальных файлов"""
@@ -2934,12 +2962,11 @@ def handle_lyrics_command(message):
 
 @bot.message_handler(func=lambda message: message.text == '📝 Текст песни')
 def handle_lyrics_button(message):
+    set_pending_action(message.chat.id, message.from_user.id, "lyrics_lookup")
     bot.reply_to(
         message,
         "📝 *Текст песни*\n\n"
-        "Отправьте:\n"
-        "• `/lyrics название песни`\n"
-        "• или `текст название песни`\n\n"
+        "Просто отправьте следующим сообщением название песни.\n\n"
         "Сначала бот ищет текст в Яндекс.Музыке, если там не находит, пробует Genius.",
         parse_mode='Markdown'
     )
@@ -3028,6 +3055,11 @@ def handle_auto_search(message):
         query = message.text.strip()
         if len(query) < 2:
             return
+
+        pending_action = get_pending_action(message.chat.id, message.from_user.id)
+        if pending_action and pending_action.get("action") == "lyrics_lookup":
+            pop_pending_action(message.chat.id, message.from_user.id)
+            return send_lyrics_lookup(message, query)
 
         if len(query) > 100:
             bot.reply_to(message, "❌ Запрос слишком длинный. Пожалуйста, укажите более короткое название.")
