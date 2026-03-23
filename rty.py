@@ -128,6 +128,7 @@ user_search_history = {}
 user_files_state = {}
 pending_transcription_requests = {}
 pending_user_actions = {}
+pending_lyrics_requests = {}
 ym_client_lock = threading.Lock()
 yandex_cache_index_lock = threading.RLock()
 chat_library_index_lock = threading.RLock()
@@ -341,6 +342,35 @@ def get_pending_action(chat_id, user_id):
     return pending_user_actions.get((chat_id, user_id))
 
 
+def register_lyrics_request(message, query):
+    token = f"{message.chat.id}_{message.message_id}_{int(time.time())}"
+    pending_lyrics_requests[token] = {
+        "chat_id": message.chat.id,
+        "user_id": message.from_user.id,
+        "query": query.strip(),
+        "created_at": time.time(),
+    }
+    return token
+
+
+def pop_lyrics_request(token):
+    return pending_lyrics_requests.pop(token, None)
+
+
+def get_lyrics_request(token):
+    return pending_lyrics_requests.get(token)
+
+
+def build_lyrics_source_keyboard(token):
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    markup.add(
+        types.InlineKeyboardButton("🌐 Авто", callback_data=f"lyrics_auto_{token}"),
+        types.InlineKeyboardButton("🎵 Яндекс", callback_data=f"lyrics_yandex_{token}"),
+        types.InlineKeyboardButton("📚 Genius", callback_data=f"lyrics_genius_{token}"),
+    )
+    return markup
+
+
 def make_yandex_track_identity(track_id):
     return str(int(track_id))
 
@@ -432,7 +462,21 @@ def get_lyrics_from_yandex(query):
     return None, None, None, "Текст в Яндекс.Музыке не найден."
 
 
-def get_song_lyrics(query):
+def get_song_lyrics(query, preferred_source="auto"):
+    preferred_source = (preferred_source or "auto").lower()
+
+    if preferred_source == "yandex":
+        lyrics_text, title, artist, source_name = get_lyrics_from_yandex(query)
+        if lyrics_text:
+            return lyrics_text, title, artist, source_name
+        return None, None, None, source_name
+
+    if preferred_source == "genius":
+        lyrics_text, title, artist, source_name = get_lyrics_from_genius(query)
+        if lyrics_text:
+            return lyrics_text, title, artist, source_name
+        return None, None, None, source_name
+
     lyrics_text, title, artist, source_name = get_lyrics_from_yandex(query)
     if lyrics_text:
         return lyrics_text, title, artist, source_name
@@ -444,8 +488,67 @@ def get_song_lyrics(query):
     return None, None, None, "Текст песни не найден ни в Яндекс.Музыке, ни в Genius."
 
 
-def send_lyrics_lookup(message, query):
-    send_lyrics_lookup(message, query)
+def prompt_lyrics_source(message, query):
+    clean_query = (query or "").strip()
+    if not clean_query:
+        bot.reply_to(
+            message,
+            "📝 *Текст песни*\n\n"
+            "Отправьте название песни и исполнителя.\n\n"
+            "*Примеры:*\n"
+            "• Ой да Oxxxymiron\n"
+            "• Кино группа крови",
+            parse_mode='Markdown'
+        )
+        return
+
+    token = register_lyrics_request(message, clean_query)
+    bot.reply_to(
+        message,
+        "📝 *Текст песни*\n\n"
+        f"Запрос: *{escape_markdown(clean_query)}*\n\n"
+        "Выберите, где искать текст:",
+        parse_mode='Markdown',
+        reply_markup=build_lyrics_source_keyboard(token)
+    )
+
+
+def process_lyrics_lookup(chat_id, message_id, query, preferred_source):
+    source_label = {
+        "auto": "Авто",
+        "yandex": "Яндекс",
+        "genius": "Genius",
+    }.get(preferred_source, "Авто")
+
+    safe_edit_message_text(
+        "📝 *Текст песни*\n\n"
+        f"Запрос: *{escape_markdown(query)}*\n"
+        f"Источник: *{escape_markdown(source_label)}*\n\n"
+        "Ищу текст...",
+        chat_id=chat_id,
+        message_id=message_id,
+        parse_mode='Markdown'
+    )
+
+    lyrics_text, title, artist, source_name = get_song_lyrics(query, preferred_source=preferred_source)
+    if not lyrics_text:
+        safe_edit_message_text(
+            "❌ *Текст песни не найден*\n\n"
+            f"Запрос: *{escape_markdown(query)}*\n"
+            f"Источник: *{escape_markdown(source_label)}*\n\n"
+            f"{escape_markdown(source_name)}",
+            chat_id=chat_id,
+            message_id=message_id,
+            parse_mode='Markdown'
+        )
+        return
+
+    safe_edit_message_text(
+        format_lyrics_text(title, artist, lyrics_text, source_name),
+        chat_id=chat_id,
+        message_id=message_id,
+        parse_mode='Markdown'
+    )
 
 
 def make_yandex_cache_key(track_id, album_id):
@@ -2934,30 +3037,15 @@ def handle_lyrics_command(message):
         bot.reply_to(
             message,
             "📝 *Текст песни*\n\n"
-            "Использование:\n"
-            "`/lyrics название песни`\n\n"
-            "Или просто напишите:\n"
-            "`текст название песни`",
+            "Отправьте название песни вместе с исполнителем.\n\n"
+            "*Примеры:*\n"
+            "• `/lyrics ой да oxxxymiron`\n"
+            "• `текст группа крови кино`",
             parse_mode='Markdown'
         )
         return
 
-    wait_msg = bot.reply_to(message, f"📝 Ищу текст песни: *{escape_markdown(query)}*...", parse_mode='Markdown')
-    lyrics_text, title, artist, source_name = get_song_lyrics(query)
-    if not lyrics_text:
-        bot.edit_message_text(
-            f"❌ {source_name}",
-            chat_id=message.chat.id,
-            message_id=wait_msg.message_id,
-        )
-        return
-
-    bot.edit_message_text(
-        format_lyrics_text(title, artist, lyrics_text, source_name),
-        chat_id=message.chat.id,
-        message_id=wait_msg.message_id,
-        parse_mode='Markdown'
-    )
+    prompt_lyrics_source(message, query)
 
 
 @bot.message_handler(func=lambda message: message.text == '📝 Текст песни')
@@ -2966,8 +3054,11 @@ def handle_lyrics_button(message):
     bot.reply_to(
         message,
         "📝 *Текст песни*\n\n"
-        "Просто отправьте следующим сообщением название песни.\n\n"
-        "Сначала бот ищет текст в Яндекс.Музыке, если там не находит, пробует Genius.",
+        "Просто отправьте следующим сообщением название песни и исполнителя.\n\n"
+        "После этого бот предложит выбрать источник: *Авто*, *Яндекс* или *Genius*.\n\n"
+        "*Примеры:*\n"
+        "• ой да oxxxymiron\n"
+        "• группа крови кино",
         parse_mode='Markdown'
     )
 
@@ -3059,7 +3150,7 @@ def handle_auto_search(message):
         pending_action = get_pending_action(message.chat.id, message.from_user.id)
         if pending_action and pending_action.get("action") == "lyrics_lookup":
             pop_pending_action(message.chat.id, message.from_user.id)
-            return send_lyrics_lookup(message, query)
+            return prompt_lyrics_source(message, query)
 
         if len(query) > 100:
             bot.reply_to(message, "❌ Запрос слишком длинный. Пожалуйста, укажите более короткое название.")
@@ -3067,7 +3158,7 @@ def handle_auto_search(message):
 
         lowered_query = query.lower()
         if lowered_query.startswith('текст '):
-            return send_lyrics_lookup(message, query[6:].strip())
+            return prompt_lyrics_source(message, query[6:].strip())
 
         if query.lower() in ['поиск', 'search', 'искать', 'музыка', 'песня']:
             return
@@ -3132,6 +3223,35 @@ def handle_callback(call):
                 chat_id=chat_id,
                 message_id=message_id,
                 parse_mode='Markdown',
+            )
+            return
+
+        elif data.startswith("lyrics_"):
+            parts = data.split("_", 2)
+            if len(parts) != 3:
+                return
+
+            preferred_source = parts[1]
+            token = parts[2]
+            request_data = pop_lyrics_request(token)
+            if not request_data:
+                safe_edit_message_text(
+                    "❌ Запрос на поиск текста устарел. Отправьте название песни еще раз.",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                )
+                return
+
+            if request_data.get("user_id") != call.from_user.id:
+                bot.answer_callback_query(call.id, "Эта кнопка не для вас.", show_alert=True)
+                pending_lyrics_requests[token] = request_data
+                return
+
+            process_lyrics_lookup(
+                chat_id=chat_id,
+                message_id=message_id,
+                query=request_data.get("query", ""),
+                preferred_source=preferred_source,
             )
             return
 
