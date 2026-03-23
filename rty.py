@@ -13,11 +13,13 @@ from config import (
     MAX_FILE_SIZE_MB,
     FFMPEG_THREADS,
     YANDEX_MUSIC_TOKEN,
+    ENABLE_VK,
     VK_LOGIN,
     VK_PASSWORD,
     VK_ACCESS_TOKEN,
     CACHE_DIR,
     DATA_DIR,
+    SEARCH_RESULTS_PER_SOURCE,
 )
 import telebot
 import os
@@ -99,7 +101,7 @@ if YM_TOKEN:
 vk_session = None
 vk_audio = None
 vk_audio_lock = threading.Lock()
-if VK_LOGIN and VK_PASSWORD:
+if ENABLE_VK and VK_LOGIN and VK_PASSWORD:
     try:
         vk_session = vk_api.VkApi(login=VK_LOGIN, password=VK_PASSWORD, token=VK_ACCESS_TOKEN or None)
         vk_session.auth(token_only=False)
@@ -109,13 +111,15 @@ if VK_LOGIN and VK_PASSWORD:
         print(f"[VK] Authorization error: {e}")
     except Exception as e:
         print(f"[VK] Initialization error: {e}")
-elif VK_ACCESS_TOKEN:
+elif ENABLE_VK and VK_ACCESS_TOKEN:
     try:
         vk_session = vk_api.VkApi(token=VK_ACCESS_TOKEN)
         vk_audio = VkAudio(vk_session)
         print("VK Music client initialized from access token.")
     except Exception as e:
         print(f"[VK] Token initialization error: {e}")
+elif not ENABLE_VK:
+    print("VK Music integration disabled.")
 
 user_search_history = {}
 user_files_state = {}
@@ -648,7 +652,8 @@ def build_main_menu_keyboard():
         types.KeyboardButton('💎 Подписка'),
         types.KeyboardButton('📋 Помощь')
     )
-    keyboard.row(types.KeyboardButton('🎧 VK'))
+    if ENABLE_VK:
+        keyboard.row(types.KeyboardButton('🎧 VK'))
     return keyboard
 
 
@@ -682,7 +687,8 @@ def is_menu_button_text(text):
         'Подписка',
         'Помощь',
     ]
-    menu_labels.append('VK')
+    if ENABLE_VK:
+        menu_labels.append('VK')
     return any(label in normalized_text for label in menu_labels)
 
 
@@ -1065,7 +1071,7 @@ def clear_cache_folders():
 
 
 # --- ПОИСК В ЯНДЕКС.МУЗЫКЕ ---
-def search_yandex_music(query, search_type="all", limit=15):
+def search_yandex_music(query, search_type="all", limit=SEARCH_RESULTS_PER_SOURCE):
     """Ищет треки в Яндекс.Музыке."""
     if not ym_client:
         print("[Yandex] Клиент не настроен для поиска")
@@ -1079,7 +1085,7 @@ def search_yandex_music(query, search_type="all", limit=15):
             print(f"[Yandex] По запросу '{query}' ничего не найдено")
             return []
 
-        tracks = search_result.tracks.results[:limit]
+        tracks = search_result.tracks.results if limit is None else search_result.tracks.results[:limit]
         print(f"[Yandex] Найдено {len(tracks)} треков по запросу '{query}'")
 
         formatted_results = []
@@ -1128,7 +1134,7 @@ def search_yandex_music(query, search_type="all", limit=15):
 
 
 # --- ПОИСК В YOUTUBE ---
-def search_youtube_music(query, limit=10):
+def search_youtube_music(query, limit=SEARCH_RESULTS_PER_SOURCE):
     """Ищет треки на YouTube по названию."""
     try:
         print(f"[YouTube Search] Поиск: '{query}'")
@@ -1201,7 +1207,7 @@ def search_youtube_music(query, limit=10):
 
 
 # --- СКАЧИВАНИЕ ИЗ YANDEX И YOUTUBЕ ---
-def search_vk_music(query, limit=10):
+def search_vk_music(query, limit=SEARCH_RESULTS_PER_SOURCE):
     """Ищет треки в VK Music через технический аккаунт бота."""
     if not vk_audio:
         print("[VK Search] Client is not configured")
@@ -1512,7 +1518,7 @@ def download_from_youtube_fast(query, is_url=False):
 
 
 # --- УНИВЕРСАЛЬНЫЙ ПОИСК ---
-def universal_search_all(query, limit_per_service=5):
+def universal_search_all(query, limit_per_service=SEARCH_RESULTS_PER_SOURCE):
     """Ищет музыку в Яндекс.Музыке и YouTube."""
     all_results = []
 
@@ -1523,7 +1529,7 @@ def universal_search_all(query, limit_per_service=5):
     youtube_results = search_youtube_music(query, limit=limit_per_service)
     all_results.extend(youtube_results)
 
-    if vk_audio:
+    if ENABLE_VK and vk_audio:
         vk_results = search_vk_music(query, limit=limit_per_service)
         all_results.extend(vk_results)
 
@@ -1558,10 +1564,13 @@ def show_search_results(chat_id, query, results, page=0):
 
     yandex_count = len([r for r in results if r.get('source') == 'yandex'])
     youtube_count = len([r for r in results if r.get('source') == 'youtube'])
-    vk_count = len([r for r in results if r.get('source') == 'vk'])
+    source_counts = [f"🎵 Яндекс: {yandex_count}", f"📺 YouTube: {youtube_count}"]
+    if ENABLE_VK:
+        vk_count = len([r for r in results if r.get('source') == 'vk'])
+        source_counts.append(f"🎧 VK: {vk_count}")
 
     message_text += f"*Найдено:* {len(results)} треков "
-    message_text += f"(🎵 Яндекс: {yandex_count}, 📺 YouTube: {youtube_count}, 🎧 VK: {vk_count})\n"
+    message_text += f"({', '.join(source_counts)})\n"
     message_text += f"*Страница:* {page + 1}/{(len(results) + 4) // 5}\n\n"
 
     for track in page_results:
@@ -1648,9 +1657,12 @@ def create_search_keyboard(results, page=0, results_per_page=5, show_all_button=
     filter_buttons.extend([
         types.InlineKeyboardButton("🎵 Яндекс", callback_data="filter_yandex"),
         types.InlineKeyboardButton("📺 YouTube", callback_data="filter_youtube"),
-        types.InlineKeyboardButton("🎧 VK", callback_data="filter_vk"),
-        types.InlineKeyboardButton("🔄 Новый поиск", callback_data="new_search"),
     ])
+
+    if ENABLE_VK:
+        filter_buttons.append(types.InlineKeyboardButton("🎧 VK", callback_data="filter_vk"))
+
+    filter_buttons.append(types.InlineKeyboardButton("🔄 Новый поиск", callback_data="new_search"))
 
     markup.add(*filter_buttons)
 
@@ -1730,7 +1742,7 @@ def process_search_query(chat_id, query, is_command=False):
         else:
             wait_msg = bot.send_message(chat_id, f"🔍 Автоматический поиск: '{query}'...")
 
-        results = universal_search_all(query, limit_per_service=5)
+        results = universal_search_all(query, limit_per_service=SEARCH_RESULTS_PER_SOURCE)
 
         if not results:
             bot.edit_message_text(f"❌ По запросу '{query}' ничего не найдено.",
@@ -1942,6 +1954,7 @@ def send_welcome(message):
 
         # Создаем клавиатуру
         keyboard = build_main_menu_keyboard()
+        vk_feature_text = "• 🎧 *VK Music* - поиск и скачивание треков через VK\n" if ENABLE_VK else ""
 
         # Проверяем, является ли пользователь администратором
         if user_id in ADMIN_IDS:
@@ -1955,7 +1968,7 @@ def send_welcome(message):
                 "• 🔍 *Автоматический поиск* - просто отправьте название песни\n"
                 "• 🎵 *Яндекс.Музыка* - поиск и скачивание треков\n"
                 "• 📺 *YouTube* - скачивание музыки с YouTube\n"
-                "• 🎧 *VK Music* - поиск и скачивание треков через VK\n"
+                f"{vk_feature_text}"
                 "• 💎 *PREMIUM подписка* - 49₽/месяц для пользователей\n\n"
 
                 "📋 *Основные команды:*\n"
@@ -1976,7 +1989,7 @@ def send_welcome(message):
                 "• 🔍 *Автоматический поиск* - просто отправьте название песни\n"
                 "• 🎵 *Яндекс.Музыка* - поиск и скачивание треков\n"
                 "• 📺 *YouTube* - скачивание музыки с YouTube\n"
-                "• 🎧 *VK Music* - поиск и скачивание треков через VK\n"
+                f"{vk_feature_text}"
                 "• 💎 *PREMIUM подписка* - 49₽/месяц\n\n"
 
                 "📋 *Основные команды:*\n"
@@ -2029,10 +2042,11 @@ def handle_status(message):
 
     status_text += "✅ *YouTube*: Сервис доступен\n"
 
-    if vk_audio:
-        status_text += "✅ *VK Music*: Технический аккаунт подключен\n"
-    else:
-        status_text += "⚠️  *VK Music*: Не настроен\n"
+    if ENABLE_VK:
+        if vk_audio:
+            status_text += "✅ *VK Music*: Технический аккаунт подключен\n"
+        else:
+            status_text += "⚠️  *VK Music*: Не настроен\n"
 
     music_files = len(get_folder_files(MUSIC_DIR))
     podcast_files = len(get_folder_files(PODCASTS_DIR))
@@ -2217,7 +2231,7 @@ def handle_search_yandex(message):
 
     wait_msg = bot.reply_to(message, f"🎵 Ищу '{query}' в Яндекс.Музыке...")
 
-    results = search_yandex_music(query, limit=15)
+    results = search_yandex_music(query, limit=SEARCH_RESULTS_PER_SOURCE)
 
     if not results:
         bot.edit_message_text(f"❌ По запросу '{query}' ничего не найдено.",
@@ -2257,7 +2271,7 @@ def handle_search_youtube(message):
 
     wait_msg = bot.reply_to(message, f"📺 Ищу '{query}' на YouTube...")
 
-    results = search_youtube_music(query, limit=15)
+    results = search_youtube_music(query, limit=SEARCH_RESULTS_PER_SOURCE)
 
     if not results:
         bot.edit_message_text(f"❌ По запросу '{query}' ничего не найдено на YouTube.",
@@ -2289,6 +2303,10 @@ def handle_search_youtube(message):
 @bot.message_handler(commands=['search_vk', 'vk'])
 def handle_search_vk(message):
     """Handles a search request in VK Music."""
+    if not ENABLE_VK:
+        bot.reply_to(message, "VK-поиск отключен в этой версии бота.")
+        return
+
     if not vk_audio:
         bot.reply_to(message, "VK Music is not configured.")
         return
@@ -2304,7 +2322,7 @@ def handle_search_vk(message):
         return
 
     wait_msg = bot.reply_to(message, f"🎧 Ищу '{query}' в VK Music...")
-    results = search_vk_music(query, limit=15)
+    results = search_vk_music(query, limit=SEARCH_RESULTS_PER_SOURCE)
 
     if not results:
         bot.edit_message_text(f"❌ По запросу '{query}' ничего не найдено в VK Music.",
@@ -2483,8 +2501,8 @@ def handle_search_button(message):
                  "🎯 *Или используйте команды:*\n"
                  "• `/search_all <запрос>` - поиск везде\n"
                  "• `/search_yandex <запрос>` - только Яндекс\n"
-                 "• `/search_youtube <запрос>` - только YouTube\n"
-                 "• `/search_vk <запрос>` - только VK",
+                 "• `/search_youtube <запрос>` - только YouTube"
+                 + ("\n• `/search_vk <запрос>` - только VK" if ENABLE_VK else ""),
                  parse_mode='Markdown')
 
 
@@ -2642,10 +2660,12 @@ def handle_auto_search(message):
 
         # Список кнопок меню, которые уже обработаны выше
         button_texts = [
-            '🎵 Мне понравилось', '🔍 Поиск музыки', '📺 YouTube', '🎧 VK',
+            '🎵 Мне понравилось', '🔍 Поиск музыки', '📺 YouTube',
             '📁 Музыка', '🎙️ Подкасты', '🗑️ Очистить кэш',
             '💎 Подписка', '📋 Помощь'
         ]
+        if ENABLE_VK:
+            button_texts.append('🎧 VK')
 
         if message.text in button_texts:
             return

@@ -12,9 +12,11 @@ Required variables:
 Optional variables:
 
 - `YANDEX_MUSIC_TOKEN`
+- `ENABLE_VK=false`
 - `VK_LOGIN`
 - `VK_PASSWORD`
 - `VK_ACCESS_TOKEN`
+- `SEARCH_RESULTS_PER_SOURCE=50`
 - `DATA_DIR=/data`
 - `CACHE_DIR=/data/audio_cache`
 
@@ -29,9 +31,11 @@ Recommended Railway setup:
 
 VK search works through one dedicated technical VK account that belongs to the bot.
 
+- Set `ENABLE_VK=true` only outside Railway if you explicitly want VK support
 - Set `VK_LOGIN` and `VK_PASSWORD` for that account
 - `VK_ACCESS_TOKEN` can be left empty unless you explicitly use it
-- After deploy, VK appears as a third source next to Yandex and YouTube
+- By default, Railway can keep VK disabled for stable deploys
+- When enabled, VK appears as a third source next to Yandex and YouTube
 - Use `/search_vk <query>` for VK-only search or plain text for combined search
 
 The repository includes:

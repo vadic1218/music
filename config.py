@@ -26,6 +26,7 @@ YANDEX_MUSIC_TOKEN = os.environ.get('YANDEX_MUSIC_TOKEN', '').strip()
 VK_LOGIN = os.environ.get('VK_LOGIN', '').strip()
 VK_PASSWORD = os.environ.get('VK_PASSWORD', '').strip()
 VK_ACCESS_TOKEN = os.environ.get('VK_ACCESS_TOKEN', '').strip()
+ENABLE_VK = os.environ.get('ENABLE_VK', '').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 DATA_DIR = Path(os.environ.get('DATA_DIR', BASE_DIR / 'data')).expanduser()
 CACHE_DIR = Path(os.environ.get('CACHE_DIR', BASE_DIR / 'audio_cache')).expanduser()
@@ -34,6 +35,7 @@ DATABASE_PATH = Path(os.environ.get('DATABASE_PATH', DATA_DIR / 'music_bot.db'))
 # Настройки кэша
 MAX_FILE_SIZE_MB = 48
 FFMPEG_THREADS = 4
+SEARCH_RESULTS_PER_SOURCE = max(5, int(os.environ.get('SEARCH_RESULTS_PER_SOURCE', '50')))
 
 # Настройки подписки
 SUBSCRIPTION_PRICES = {
