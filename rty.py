@@ -14,6 +14,8 @@ from config import (
     FFMPEG_THREADS,
     YANDEX_MUSIC_TOKEN,
     ENABLE_VK,
+    OPENAI_API_KEY,
+    OPENAI_TRANSCRIBE_MODEL,
     VK_LOGIN,
     VK_PASSWORD,
     VK_ACCESS_TOKEN,
@@ -133,11 +135,16 @@ active_liked_sync_users = set()
 AUDIO_CACHE_DIR = str(CACHE_DIR)
 MUSIC_DIR = os.path.join(AUDIO_CACHE_DIR, "music")
 PODCASTS_DIR = os.path.join(AUDIO_CACHE_DIR, "podcasts")
+TRANSCRIPTIONS_DIR = Path(DATA_DIR) / "transcriptions"
+TRANSCRIPTION_MAX_BYTES = 25 * 1024 * 1024
+TRANSCRIPTION_API_URL = "https://api.openai.com/v1/audio/transcriptions"
+TRANSCRIPTION_ENABLED = bool(OPENAI_API_KEY)
 
 os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
 os.makedirs(MUSIC_DIR, exist_ok=True)
 os.makedirs(PODCASTS_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(TRANSCRIPTIONS_DIR, exist_ok=True)
 
 YANDEX_CACHE_INDEX_PATH = Path(DATA_DIR) / "yandex_cache_index.json"
 YANDEX_CHAT_LIBRARY_INDEX_PATH = Path(DATA_DIR) / "yandex_chat_library_index.json"
@@ -164,6 +171,62 @@ def sanitize_filename(text, fallback="unknown", max_length=80):
     if not sanitized:
         sanitized = fallback
     return sanitized[:max_length]
+
+
+def transcription_is_available():
+    return TRANSCRIPTION_ENABLED
+
+
+def save_telegram_file_locally(file_id, filename_hint):
+    file_info = bot.get_file(file_id)
+    raw_bytes = bot.download_file(file_info.file_path)
+    safe_name = sanitize_filename(filename_hint, fallback="voice_message", max_length=80)
+    if "." not in safe_name:
+        suffix = Path(file_info.file_path).suffix or ".ogg"
+        safe_name = f"{safe_name}{suffix}"
+
+    local_path = TRANSCRIPTIONS_DIR / safe_name
+    local_path.write_bytes(raw_bytes)
+    return local_path
+
+
+def transcribe_audio_file(file_path: Path):
+    if not transcription_is_available():
+        return None, "Расшифровка речи не настроена."
+
+    file_size = file_path.stat().st_size
+    if file_size > TRANSCRIPTION_MAX_BYTES:
+        return None, "Файл слишком большой для расшифровки. Отправьте голосовое до 25 МБ."
+
+    try:
+        with file_path.open("rb") as audio_file:
+            response = requests.post(
+                TRANSCRIPTION_API_URL,
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                data={
+                    "model": OPENAI_TRANSCRIBE_MODEL,
+                    "response_format": "json",
+                },
+                files={"file": (file_path.name, audio_file, "application/octet-stream")},
+                timeout=(20, 300),
+            )
+        response.raise_for_status()
+        payload = response.json()
+        text = (payload.get("text") or "").strip()
+        if not text:
+            return None, "Не удалось получить текст из аудио."
+        return text, None
+    except Exception as e:
+        print(f"[Transcription] Error: {e}")
+        return None, f"Ошибка расшифровки: {e}"
+
+
+def format_transcription_text(text):
+    text = text.strip()
+    if len(text) <= 3500:
+        return f"📝 *Расшифровка речи:*\n\n{text}"
+    short_text = text[:3500].rstrip()
+    return f"📝 *Расшифровка речи:*\n\n{short_text}\n\n…текст сокращен."
 
 
 def make_yandex_cache_key(track_id, album_id):
@@ -642,7 +705,6 @@ def build_main_menu_keyboard():
         types.KeyboardButton('🎵 Мне понравилось'),
         types.KeyboardButton('🔍 Поиск музыки')
     )
-    keyboard.row(types.KeyboardButton('📺 YouTube'))
     keyboard.row(
         types.KeyboardButton('📁 Музыка'),
         types.KeyboardButton('🎙️ Подкасты'),
@@ -650,8 +712,9 @@ def build_main_menu_keyboard():
     )
     keyboard.row(
         types.KeyboardButton('💎 Подписка'),
-        types.KeyboardButton('📋 Помощь')
+        types.KeyboardButton('📝 Расшифровка')
     )
+    keyboard.row(types.KeyboardButton('📋 Помощь'))
     if ENABLE_VK:
         keyboard.row(types.KeyboardButton('🎧 VK'))
     return keyboard
@@ -680,11 +743,11 @@ def is_menu_button_text(text):
     menu_labels = [
         'Мне понравилось',
         'Поиск музыки',
-        'YouTube',
         'Музыка',
         'Подкасты',
         'Очистить кэш',
         'Подписка',
+        'Расшифровка',
         'Помощь',
     ]
     if ENABLE_VK:
@@ -1955,6 +2018,7 @@ def send_welcome(message):
         # Создаем клавиатуру
         keyboard = build_main_menu_keyboard()
         vk_feature_text = "• 🎧 *VK Music* - поиск и скачивание треков через VK\n" if ENABLE_VK else ""
+        transcription_feature_text = "• 📝 *Расшифровка речи* - перевод голосовых сообщений в текст\n" if TRANSCRIPTION_ENABLED else ""
 
         # Проверяем, является ли пользователь администратором
         if user_id in ADMIN_IDS:
@@ -1969,6 +2033,7 @@ def send_welcome(message):
                 "• 🎵 *Яндекс.Музыка* - поиск и скачивание треков\n"
                 "• 📺 *YouTube* - скачивание музыки с YouTube\n"
                 f"{vk_feature_text}"
+                f"{transcription_feature_text}"
                 "• 💎 *PREMIUM подписка* - 49₽/месяц для пользователей\n\n"
 
                 "📋 *Основные команды:*\n"
@@ -1990,6 +2055,7 @@ def send_welcome(message):
                 "• 🎵 *Яндекс.Музыка* - поиск и скачивание треков\n"
                 "• 📺 *YouTube* - скачивание музыки с YouTube\n"
                 f"{vk_feature_text}"
+                f"{transcription_feature_text}"
                 "• 💎 *PREMIUM подписка* - 49₽/месяц\n\n"
 
                 "📋 *Основные команды:*\n"
@@ -2047,6 +2113,11 @@ def handle_status(message):
             status_text += "✅ *VK Music*: Технический аккаунт подключен\n"
         else:
             status_text += "⚠️  *VK Music*: Не настроен\n"
+
+    if TRANSCRIPTION_ENABLED:
+        status_text += f"✅ *Расшифровка речи*: Модель `{OPENAI_TRANSCRIBE_MODEL}`\n"
+    else:
+        status_text += "⚠️  *Расшифровка речи*: Не настроена\n"
 
     music_files = len(get_folder_files(MUSIC_DIR))
     podcast_files = len(get_folder_files(PODCASTS_DIR))
@@ -2609,6 +2680,19 @@ def handle_subscribe_button(message):
     handle_subscribe(message)
 
 
+@bot.message_handler(func=lambda message: message.text == '📝 Расшифровка')
+def handle_transcription_button(message):
+    bot.reply_to(
+        message,
+        "📝 *Расшифровка речи*\n\n"
+        "Пришлите голосовое сообщение, и бот попробует перевести речь в текст.\n\n"
+        "Важно:\n"
+        "• функция предназначена для речи, а не для полного текста песен\n"
+        "• большие файлы и музыка без четкой речи могут распознаваться плохо",
+        parse_mode='Markdown'
+    )
+
+
 @bot.message_handler(func=lambda message: message.text == '📋 Помощь')
 def handle_help_button(message):
     send_welcome(message)
@@ -2643,8 +2727,74 @@ def handle_menu_buttons_fallback(message):
         return handle_clear_cache_button(message)
     if 'Подписка' in normalized_text:
         return handle_subscribe_button(message)
+    if 'Расшифровка' in normalized_text:
+        return handle_transcription_button(message)
     if 'Помощь' in normalized_text:
         return handle_help_button(message)
+
+
+# ============================================
+# РАСШИФРОВКА РЕЧИ
+# ============================================
+
+@bot.message_handler(content_types=['voice'])
+def handle_voice_transcription(message):
+    if not transcription_is_available():
+        bot.reply_to(
+            message,
+            "📝 Расшифровка речи пока не настроена. Добавьте `OPENAI_API_KEY` в переменные окружения.",
+        )
+        return
+
+    has_access, _ = ensure_subscription_access(message.from_user.id, message.chat.id, reply_target=message)
+    if not has_access:
+        return
+
+    wait_msg = bot.reply_to(message, "📝 Расшифровываю голосовое сообщение...")
+    temp_path = None
+    try:
+        temp_path = save_telegram_file_locally(message.voice.file_id, f"voice_{message.message_id}.ogg")
+        text, error = transcribe_audio_file(temp_path)
+        if error:
+            bot.edit_message_text(
+                f"❌ {error}",
+                chat_id=message.chat.id,
+                message_id=wait_msg.message_id
+            )
+            return
+
+        bot.edit_message_text(
+            format_transcription_text(text),
+            chat_id=message.chat.id,
+            message_id=wait_msg.message_id,
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(f"[Transcription] Voice handler error: {e}")
+        bot.edit_message_text(
+            "❌ Не удалось расшифровать голосовое сообщение.",
+            chat_id=message.chat.id,
+            message_id=wait_msg.message_id
+        )
+    finally:
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+
+
+@bot.message_handler(content_types=['audio', 'document'])
+def handle_audio_transcription_guard(message):
+    if message.content_type == 'document':
+        mime_type = getattr(message.document, 'mime_type', '') or ''
+        if not mime_type.startswith('audio/'):
+            return
+
+    bot.reply_to(
+        message,
+        "📝 Я не расшифровываю полные песни в текст. Для расшифровки речи используйте голосовые сообщения.",
+    )
 
 
 # ============================================
@@ -2660,9 +2810,9 @@ def handle_auto_search(message):
 
         # Список кнопок меню, которые уже обработаны выше
         button_texts = [
-            '🎵 Мне понравилось', '🔍 Поиск музыки', '📺 YouTube',
+            '🎵 Мне понравилось', '🔍 Поиск музыки',
             '📁 Музыка', '🎙️ Подкасты', '🗑️ Очистить кэш',
-            '💎 Подписка', '📋 Помощь'
+            '💎 Подписка', '📝 Расшифровка', '📋 Помощь'
         ]
         if ENABLE_VK:
             button_texts.append('🎧 VK')

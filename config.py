@@ -27,6 +27,8 @@ VK_LOGIN = os.environ.get('VK_LOGIN', '').strip()
 VK_PASSWORD = os.environ.get('VK_PASSWORD', '').strip()
 VK_ACCESS_TOKEN = os.environ.get('VK_ACCESS_TOKEN', '').strip()
 ENABLE_VK = os.environ.get('ENABLE_VK', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '').strip()
+OPENAI_TRANSCRIBE_MODEL = os.environ.get('OPENAI_TRANSCRIBE_MODEL', 'gpt-4o-mini-transcribe').strip()
 
 DATA_DIR = Path(os.environ.get('DATA_DIR', BASE_DIR / 'data')).expanduser()
 CACHE_DIR = Path(os.environ.get('CACHE_DIR', BASE_DIR / 'audio_cache')).expanduser()

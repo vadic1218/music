@@ -17,6 +17,8 @@ Optional variables:
 - `VK_PASSWORD`
 - `VK_ACCESS_TOKEN`
 - `SEARCH_RESULTS_PER_SOURCE=50`
+- `OPENAI_API_KEY`
+- `OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe`
 - `DATA_DIR=/data`
 - `CACHE_DIR=/data/audio_cache`
 
@@ -37,6 +39,14 @@ VK search works through one dedicated technical VK account that belongs to the b
 - By default, Railway can keep VK disabled for stable deploys
 - When enabled, VK appears as a third source next to Yandex and YouTube
 - Use `/search_vk <query>` for VK-only search or plain text for combined search
+
+## Speech Transcription
+
+The bot can transcribe speech from Telegram voice messages when `OPENAI_API_KEY` is configured.
+
+- Intended for speech and voice messages
+- Not intended to output full song lyrics
+- Default model: `gpt-4o-mini-transcribe`
 
 The repository includes:
 
