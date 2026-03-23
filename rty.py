@@ -371,6 +371,52 @@ def build_lyrics_source_keyboard(token):
     return markup
 
 
+def normalize_match_text(value):
+    value = (value or "").lower().replace("ё", "е")
+    cleaned = []
+    for char in value:
+        if char.isalnum() or char.isspace():
+            cleaned.append(char)
+        else:
+            cleaned.append(" ")
+    return " ".join("".join(cleaned).split())
+
+
+def score_song_match(query, title, artist=""):
+    normalized_query = normalize_match_text(query)
+    normalized_title = normalize_match_text(title)
+    normalized_artist = normalize_match_text(artist)
+    combined = f"{normalized_artist} {normalized_title}".strip()
+
+    if not normalized_query:
+        return 0
+
+    score = 0
+    if normalized_query == normalized_title:
+        score += 120
+    if normalized_query == combined:
+        score += 180
+    if normalized_query in combined:
+        score += 80
+
+    query_tokens = [token for token in normalized_query.split() if len(token) > 1]
+    title_tokens = set(normalized_title.split())
+    artist_tokens = set(normalized_artist.split())
+    combined_tokens = title_tokens | artist_tokens
+
+    for token in query_tokens:
+        if token in title_tokens:
+            score += 18
+        elif token in artist_tokens:
+            score += 12
+        elif token in combined_tokens:
+            score += 8
+        elif token in combined:
+            score += 4
+
+    return score
+
+
 def make_yandex_track_identity(track_id):
     return str(int(track_id))
 
@@ -453,7 +499,13 @@ def get_lyrics_from_genius(query):
         search_response.raise_for_status()
 
         hits = extract_genius_search_hits(search_response.text)
-        for song_url, fallback_title in hits[:10]:
+        ranked_hits = sorted(
+            hits,
+            key=lambda item: score_song_match(query, item[1], item[0].replace("https://genius.com/", "").replace("-lyrics", "").replace("-", " ")),
+            reverse=True,
+        )
+
+        for song_url, fallback_title in ranked_hits[:10]:
             page_response = requests.get(song_url, headers=headers, timeout=(10, 30))
             page_response.raise_for_status()
             lyrics_text = extract_genius_lyrics(page_response.text)
@@ -487,8 +539,13 @@ def get_lyrics_from_yandex(query):
     if not ym_client:
         return None, None, None, "Яндекс.Музыка не настроена."
 
-    candidates = search_yandex_music(query, limit=10)
-    for candidate in candidates:
+    candidates = search_yandex_music(query, limit=20)
+    ranked_candidates = sorted(
+        candidates,
+        key=lambda candidate: score_song_match(query, candidate.get("title"), candidate.get("artists")),
+        reverse=True,
+    )
+    for candidate in ranked_candidates:
         try:
             lyrics_meta = ym_client.tracks_lyrics(candidate["track_id"], format="TEXT")
             if not lyrics_meta:
@@ -1045,8 +1102,10 @@ def finish_liked_sync(user_id):
         active_liked_sync_users.discard(user_id)
 
 
-def run_liked_sync(chat_id, user_id, wait_message_id):
+def run_liked_sync(chat_id, user_id, wait_message_id, library_chat_id=None):
     try:
+        target_library_chat_id = library_chat_id or chat_id
+
         def progress_callback(stage, total, processed, downloaded, reused, failed, removed, sent_to_chat, already_in_chat, removed_from_chat):
             print(
                 f"[Yandex Likes] stage={stage} processed={processed}/{total} "
@@ -1070,7 +1129,7 @@ def run_liked_sync(chat_id, user_id, wait_message_id):
                 parse_mode='Markdown'
             )
 
-        sync_result = sync_yandex_liked_tracks(chat_id=chat_id, progress_callback=progress_callback)
+        sync_result = sync_yandex_liked_tracks(chat_id=target_library_chat_id, progress_callback=progress_callback)
         if not sync_result["success"]:
             safe_edit_message_text(
                 f"❌ *Не удалось синхронизировать лайки*\n\n{escape_markdown(sync_result['message'])}",
@@ -2960,6 +3019,15 @@ def handle_liked_button(message):
         return
 
     user_id = message.from_user.id
+    if user_id not in ADMIN_IDS:
+        bot.reply_to(
+            message,
+            "❌ Синхронизация *«Мне понравилось»* доступна только администратору, потому что использует один общий аккаунт Яндекс.Музыки бота.",
+            parse_mode='Markdown'
+        )
+        return
+
+    library_chat_id = ADMIN_CONTACT_ID or message.chat.id
     with liked_sync_state_lock:
         if user_id in active_liked_sync_users:
             bot.reply_to(
@@ -2983,7 +3051,7 @@ def handle_liked_button(message):
 
     threading.Thread(
         target=run_liked_sync,
-        args=(message.chat.id, user_id, wait_msg.message_id),
+        args=(message.chat.id, user_id, wait_msg.message_id, library_chat_id),
         daemon=True
     ).start()
 
