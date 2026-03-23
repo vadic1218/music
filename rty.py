@@ -125,6 +125,7 @@ elif not ENABLE_VK:
 
 user_search_history = {}
 user_files_state = {}
+pending_transcription_requests = {}
 ym_client_lock = threading.Lock()
 yandex_cache_index_lock = threading.RLock()
 chat_library_index_lock = threading.RLock()
@@ -227,6 +228,100 @@ def format_transcription_text(text):
         return f"📝 *Расшифровка речи:*\n\n{text}"
     short_text = text[:3500].rstrip()
     return f"📝 *Расшифровка речи:*\n\n{short_text}\n\n…текст сокращен."
+
+
+def get_media_duration_seconds(file_path: Path):
+    try:
+        probe_cmd = [
+            'ffprobe', '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            str(file_path),
+        ]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return 0
+        return max(0, int(float((result.stdout or "0").strip() or 0)))
+    except Exception as e:
+        print(f"[Transcription] Duration probe error: {e}")
+        return 0
+
+
+def split_audio_for_transcription(file_path: Path, segment_seconds=480):
+    file_size = file_path.stat().st_size
+    duration_seconds = get_media_duration_seconds(file_path)
+
+    if file_size <= TRANSCRIPTION_MAX_BYTES and duration_seconds <= segment_seconds:
+        return [file_path]
+
+    segment_dir = TRANSCRIPTIONS_DIR / f"{file_path.stem}_parts"
+    segment_dir.mkdir(parents=True, exist_ok=True)
+    segment_pattern = segment_dir / f"{file_path.stem}_part_%03d{file_path.suffix or '.ogg'}"
+
+    split_cmd = [
+        'ffmpeg', '-y',
+        '-i', str(file_path),
+        '-f', 'segment',
+        '-segment_time', str(segment_seconds),
+        '-c', 'copy',
+        str(segment_pattern),
+    ]
+
+    result = subprocess.run(split_cmd, capture_output=True, text=True, timeout=300)
+    if result.returncode != 0:
+        print(f"[Transcription] Split error: {result.stderr}")
+        return [file_path]
+
+    parts = sorted(segment_dir.glob(f"{file_path.stem}_part_*{file_path.suffix or '.ogg'}"))
+    return parts or [file_path]
+
+
+def transcribe_audio_with_chunking(file_path: Path):
+    chunk_paths = split_audio_for_transcription(file_path)
+    texts = []
+    try:
+        for chunk_path in chunk_paths:
+            text, error = transcribe_audio_file(chunk_path)
+            if error:
+                return None, error
+            if text:
+                texts.append(text.strip())
+        if not texts:
+            return None, "Не удалось получить текст из аудио."
+        return "\n\n".join(texts), None
+    finally:
+        for chunk_path in chunk_paths:
+            if chunk_path != file_path and chunk_path.exists():
+                try:
+                    chunk_path.unlink()
+                except OSError:
+                    pass
+        for chunk_path in chunk_paths:
+            parent_dir = chunk_path.parent
+            if parent_dir != TRANSCRIPTIONS_DIR and parent_dir.exists():
+                try:
+                    parent_dir.rmdir()
+                except OSError:
+                    pass
+
+
+def register_transcription_request(message, media_type, file_id, filename_hint):
+    token = f"{message.chat.id}_{message.message_id}"
+    pending_transcription_requests[token] = {
+        "chat_id": message.chat.id,
+        "user_id": message.from_user.id,
+        "file_id": file_id,
+        "filename_hint": filename_hint,
+        "media_type": media_type,
+        "created_at": time.time(),
+    }
+    return token
+
+
+def build_transcription_keyboard(token):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("📝 Расшифровать", callback_data=f"transcribe_{token}"))
+    return markup
 
 
 def make_yandex_cache_key(track_id, album_id):
@@ -2750,38 +2845,17 @@ def handle_voice_transcription(message):
     if not has_access:
         return
 
-    wait_msg = bot.reply_to(message, "📝 Расшифровываю голосовое сообщение...")
-    temp_path = None
-    try:
-        temp_path = save_telegram_file_locally(message.voice.file_id, f"voice_{message.message_id}.ogg")
-        text, error = transcribe_audio_file(temp_path)
-        if error:
-            bot.edit_message_text(
-                f"❌ {error}",
-                chat_id=message.chat.id,
-                message_id=wait_msg.message_id
-            )
-            return
-
-        bot.edit_message_text(
-            format_transcription_text(text),
-            chat_id=message.chat.id,
-            message_id=wait_msg.message_id,
-            parse_mode='Markdown'
-        )
-    except Exception as e:
-        print(f"[Transcription] Voice handler error: {e}")
-        bot.edit_message_text(
-            "❌ Не удалось расшифровать голосовое сообщение.",
-            chat_id=message.chat.id,
-            message_id=wait_msg.message_id
-        )
-    finally:
-        if temp_path and temp_path.exists():
-            try:
-                temp_path.unlink()
-            except OSError:
-                pass
+    token = register_transcription_request(
+        message,
+        media_type="voice",
+        file_id=message.voice.file_id,
+        filename_hint=f"voice_{message.message_id}.ogg",
+    )
+    bot.reply_to(
+        message,
+        "📝 Голосовое получено. Нажмите кнопку ниже, чтобы запустить расшифровку.",
+        reply_markup=build_transcription_keyboard(token),
+    )
 
 
 @bot.message_handler(content_types=['audio', 'document'])
@@ -2790,10 +2864,31 @@ def handle_audio_transcription_guard(message):
         mime_type = getattr(message.document, 'mime_type', '') or ''
         if not mime_type.startswith('audio/'):
             return
+        file_id = message.document.file_id
+        filename_hint = message.document.file_name or f"document_{message.message_id}.bin"
+        duration = 0
+    else:
+        file_id = message.audio.file_id
+        filename_hint = message.audio.file_name or f"audio_{message.message_id}.mp3"
+        duration = getattr(message.audio, 'duration', 0) or 0
 
+    if duration and duration > 1800:
+        bot.reply_to(
+            message,
+            "📝 Файл слишком длинный для быстрой расшифровки. Пришлите более короткий фрагмент с речью.",
+        )
+        return
+
+    token = register_transcription_request(
+        message,
+        media_type=message.content_type,
+        file_id=file_id,
+        filename_hint=filename_hint,
+    )
     bot.reply_to(
         message,
-        "📝 Я не расшифровываю полные песни в текст. Для расшифровки речи используйте голосовые сообщения.",
+        "📝 Аудио получено. Если там есть речь, нажмите кнопку ниже для расшифровки.",
+        reply_markup=build_transcription_keyboard(token),
     )
 
 
@@ -2886,6 +2981,67 @@ def handle_callback(call):
                 )
             except Exception as e:
                 print(f"[ERROR] Failed to edit message for new_search: {e}")
+            return
+
+        elif data.startswith("transcribe_"):
+            token = data.replace("transcribe_", "", 1)
+            request_data = pending_transcription_requests.get(token)
+            if not request_data:
+                safe_edit_message_text(
+                    "❌ Запрос на расшифровку уже устарел. Отправьте аудио заново.",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                )
+                return
+
+            if request_data["user_id"] != call.from_user.id:
+                bot.answer_callback_query(call.id, "Эта кнопка доступна только отправителю аудио.")
+                return
+
+            has_access, _ = ensure_subscription_access(call.from_user.id, chat_id)
+            if not has_access:
+                return
+
+            temp_path = None
+            try:
+                safe_edit_message_text(
+                    "📝 Расшифровываю аудио. Для длинных сообщений это может занять некоторое время...",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                )
+                temp_path = save_telegram_file_locally(
+                    request_data["file_id"],
+                    request_data["filename_hint"],
+                )
+                text, error = transcribe_audio_with_chunking(temp_path)
+                if error:
+                    safe_edit_message_text(
+                        f"❌ {error}",
+                        chat_id=chat_id,
+                        message_id=message_id,
+                    )
+                    return
+
+                safe_edit_message_text(
+                    format_transcription_text(text),
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    parse_mode='Markdown',
+                )
+            except Exception as e:
+                print(f"[Transcription] Callback error: {e}")
+                safe_edit_message_text(
+                    "❌ Не удалось расшифровать это аудио.",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                )
+            finally:
+                pending_transcription_requests.pop(token, None)
+                if temp_path and temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except OSError:
+                        pass
             return
 
         elif data == "back_to_menu":
