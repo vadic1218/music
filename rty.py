@@ -7,7 +7,18 @@
 # Импорт библиотек
 import database
 from pathlib import Path
-from config import BOT_TOKEN, ADMIN_IDS, MAX_FILE_SIZE_MB, FFMPEG_THREADS, YANDEX_MUSIC_TOKEN, CACHE_DIR, DATA_DIR
+from config import (
+    BOT_TOKEN,
+    ADMIN_IDS,
+    MAX_FILE_SIZE_MB,
+    FFMPEG_THREADS,
+    YANDEX_MUSIC_TOKEN,
+    VK_LOGIN,
+    VK_PASSWORD,
+    VK_ACCESS_TOKEN,
+    CACHE_DIR,
+    DATA_DIR,
+)
 import telebot
 import os
 import sys
@@ -28,6 +39,9 @@ import math
 from telebot import types
 import traceback
 from datetime import datetime, timedelta, timezone
+import vk_api
+from vk_api.audio import VkAudio
+from vk_api.exceptions import AuthError
 
 # --- НАСТРОЙКА БОТА ---
 BASE_DIR = Path(__file__).resolve().parent
@@ -82,6 +96,27 @@ if YM_TOKEN:
         print(f"⚠️  Неизвестная ошибка инициализации Яндекс.Музыки: {e}")
 
 # --- ОБЩИЕ ПЕРЕМЕННЫЕ ---
+vk_session = None
+vk_audio = None
+vk_audio_lock = threading.Lock()
+if VK_LOGIN and VK_PASSWORD:
+    try:
+        vk_session = vk_api.VkApi(login=VK_LOGIN, password=VK_PASSWORD, token=VK_ACCESS_TOKEN or None)
+        vk_session.auth(token_only=False)
+        vk_audio = VkAudio(vk_session)
+        print("VK Music client initialized.")
+    except AuthError as e:
+        print(f"[VK] Authorization error: {e}")
+    except Exception as e:
+        print(f"[VK] Initialization error: {e}")
+elif VK_ACCESS_TOKEN:
+    try:
+        vk_session = vk_api.VkApi(token=VK_ACCESS_TOKEN)
+        vk_audio = VkAudio(vk_session)
+        print("VK Music client initialized from access token.")
+    except Exception as e:
+        print(f"[VK] Token initialization error: {e}")
+
 user_search_history = {}
 user_files_state = {}
 ym_client_lock = threading.Lock()
@@ -613,6 +648,7 @@ def build_main_menu_keyboard():
         types.KeyboardButton('💎 Подписка'),
         types.KeyboardButton('📋 Помощь')
     )
+    keyboard.row(types.KeyboardButton('🎧 VK'))
     return keyboard
 
 
@@ -646,6 +682,7 @@ def is_menu_button_text(text):
         'Подписка',
         'Помощь',
     ]
+    menu_labels.append('VK')
     return any(label in normalized_text for label in menu_labels)
 
 
@@ -1164,6 +1201,48 @@ def search_youtube_music(query, limit=10):
 
 
 # --- СКАЧИВАНИЕ ИЗ YANDEX И YOUTUBЕ ---
+def search_vk_music(query, limit=10):
+    """Ищет треки в VK Music через технический аккаунт бота."""
+    if not vk_audio:
+        print("[VK Search] Client is not configured")
+        return []
+
+    try:
+        print(f"[VK Search] Поиск: '{query}'")
+        with vk_audio_lock:
+            tracks = list(vk_audio.search(query, count=limit))
+
+        formatted_results = []
+        for track in tracks[:limit]:
+            try:
+                title = track.get('title', 'Без названия')
+                artist = track.get('artist', 'Неизвестный исполнитель')
+                duration_seconds = int(track.get('duration') or 0)
+                minutes = duration_seconds // 60
+                seconds = duration_seconds % 60
+                duration_str = f"{minutes}:{str(seconds).zfill(2)}" if duration_seconds else "Неизвестно"
+
+                formatted_results.append({
+                    'title': title,
+                    'artist': artist,
+                    'artists': artist,
+                    'duration': duration_str,
+                    'duration_seconds': duration_seconds,
+                    'track_id': int(track.get('id') or 0),
+                    'owner_id': int(track.get('owner_id') or 0),
+                    'url': track.get('url', ''),
+                    'source': 'vk',
+                })
+            except Exception as e:
+                print(f"[VK Search] Ошибка форматирования трека: {e}")
+
+        print(f"[VK Search] Найдено {len(formatted_results)} треков по запросу '{query}'")
+        return formatted_results
+    except Exception as e:
+        print(f"[VK Search] Ошибка поиска: {e}")
+        return []
+
+
 def download_yandex_track_fast(track_id, album_id, liked_synced=False):
     """????????? ???? ?? ??????.?????? ? ?????????????????? ?????????? ????."""
     if not ym_client:
@@ -1246,6 +1325,47 @@ def download_yandex_track_fast(track_id, album_id, liked_synced=False):
     except Exception as e:
         print(f"[Yandex] ?????? ??????????: {e}")
         return None, None, None, f"?????? ??????????: {str(e)}"
+
+
+def download_vk_track_fast(owner_id, track_id, track_url=None, title_hint=None, artist_hint=None, duration_seconds=0):
+    """Скачивает трек из VK Music по прямой ссылке, полученной через технический аккаунт."""
+    if not vk_audio:
+        return None, None, None, "VK Music не настроен."
+
+    try:
+        track_data = None
+        if not track_url:
+            with vk_audio_lock:
+                track_data = vk_audio.get_audio_by_id(owner_id, track_id)
+            if track_data:
+                track_url = track_data.get('url')
+                title_hint = track_data.get('title') or title_hint
+                artist_hint = track_data.get('artist') or artist_hint
+                duration_seconds = int(track_data.get('duration') or duration_seconds or 0)
+
+        if not track_url:
+            return None, None, None, "Не удалось получить ссылку на трек VK."
+
+        safe_title = sanitize_filename(title_hint or f"track_{track_id}", fallback=f"track_{track_id}", max_length=70)
+        safe_artist = sanitize_filename(artist_hint or "Unknown Artist", fallback="Unknown Artist", max_length=40)
+        target_dir = get_target_folder(duration_seconds)
+        os.makedirs(target_dir, exist_ok=True)
+
+        filename = f"vk_{owner_id}_{track_id}_{safe_artist} - {safe_title}.mp3"
+        filepath = os.path.join(target_dir, filename)
+
+        if not os.path.exists(filepath):
+            with requests.get(track_url, stream=True, timeout=(10, 120)) as response:
+                response.raise_for_status()
+                with open(filepath, 'wb') as output_file:
+                    for chunk in response.iter_content(chunk_size=1024 * 256):
+                        if chunk:
+                            output_file.write(chunk)
+
+        return filepath, title_hint or safe_title, artist_hint or safe_artist, "success"
+    except Exception as e:
+        print(f"[VK] Ошибка скачивания: {e}")
+        return None, None, None, f"Ошибка скачивания VK: {str(e)}"
 
 
 def download_from_youtube_fast(query, is_url=False):
@@ -1403,6 +1523,10 @@ def universal_search_all(query, limit_per_service=5):
     youtube_results = search_youtube_music(query, limit=limit_per_service)
     all_results.extend(youtube_results)
 
+    if vk_audio:
+        vk_results = search_vk_music(query, limit=limit_per_service)
+        all_results.extend(vk_results)
+
     for i, result in enumerate(all_results):
         result['global_index'] = i + 1
 
@@ -1434,9 +1558,10 @@ def show_search_results(chat_id, query, results, page=0):
 
     yandex_count = len([r for r in results if r.get('source') == 'yandex'])
     youtube_count = len([r for r in results if r.get('source') == 'youtube'])
+    vk_count = len([r for r in results if r.get('source') == 'vk'])
 
     message_text += f"*Найдено:* {len(results)} треков "
-    message_text += f"(🎵 Яндекс: {yandex_count}, 📺 YouTube: {youtube_count})\n"
+    message_text += f"(🎵 Яндекс: {yandex_count}, 📺 YouTube: {youtube_count}, 🎧 VK: {vk_count})\n"
     message_text += f"*Страница:* {page + 1}/{(len(results) + 4) // 5}\n\n"
 
     for track in page_results:
@@ -1453,6 +1578,10 @@ def show_search_results(chat_id, query, results, page=0):
         else:
             source_icon = "🔍"
             artist_info = 'Неизвестно'
+
+        if source == 'vk':
+            source_icon = "🎧"
+            artist_info = escape_markdown(track.get('artist', 'Unknown artist'))
 
         message_text += f"{idx}. {source_icon} *{title}*\n"
         message_text += f"   👤 {artist_info}\n"
@@ -1485,12 +1614,17 @@ def create_search_keyboard(results, page=0, results_per_page=5, show_all_button=
         else:
             source_icon = "🔍"
 
+        if source == 'vk':
+            source_icon = "🎧"
+
         btn_text = f"{source_icon} {idx}. {title[:15]}..."
 
         if source == 'yandex':
             btn_data = f"ya_{track.get('track_id', 0)}_{track.get('album_id', 0)}_{page}"
         elif source == 'youtube':
             btn_data = f"yt_{track.get('video_id', '')}_{page}"
+        elif source == 'vk':
+            btn_data = f"vk_{track.get('owner_id', 0)}_{track.get('track_id', 0)}_{page}"
         else:
             btn_data = f"info_{idx}_{page}"
 
@@ -1514,6 +1648,7 @@ def create_search_keyboard(results, page=0, results_per_page=5, show_all_button=
     filter_buttons.extend([
         types.InlineKeyboardButton("🎵 Яндекс", callback_data="filter_yandex"),
         types.InlineKeyboardButton("📺 YouTube", callback_data="filter_youtube"),
+        types.InlineKeyboardButton("🎧 VK", callback_data="filter_vk"),
         types.InlineKeyboardButton("🔄 Новый поиск", callback_data="new_search"),
     ])
 
@@ -1820,6 +1955,7 @@ def send_welcome(message):
                 "• 🔍 *Автоматический поиск* - просто отправьте название песни\n"
                 "• 🎵 *Яндекс.Музыка* - поиск и скачивание треков\n"
                 "• 📺 *YouTube* - скачивание музыки с YouTube\n"
+                "• 🎧 *VK Music* - поиск и скачивание треков через VK\n"
                 "• 💎 *PREMIUM подписка* - 49₽/месяц для пользователей\n\n"
 
                 "📋 *Основные команды:*\n"
@@ -1840,6 +1976,7 @@ def send_welcome(message):
                 "• 🔍 *Автоматический поиск* - просто отправьте название песни\n"
                 "• 🎵 *Яндекс.Музыка* - поиск и скачивание треков\n"
                 "• 📺 *YouTube* - скачивание музыки с YouTube\n"
+                "• 🎧 *VK Music* - поиск и скачивание треков через VK\n"
                 "• 💎 *PREMIUM подписка* - 49₽/месяц\n\n"
 
                 "📋 *Основные команды:*\n"
@@ -1891,6 +2028,11 @@ def handle_status(message):
         status_text += "⚠️  *Яндекс.Музыка*: Токен не указан\n"
 
     status_text += "✅ *YouTube*: Сервис доступен\n"
+
+    if vk_audio:
+        status_text += "✅ *VK Music*: Технический аккаунт подключен\n"
+    else:
+        status_text += "⚠️  *VK Music*: Не настроен\n"
 
     music_files = len(get_folder_files(MUSIC_DIR))
     podcast_files = len(get_folder_files(PODCASTS_DIR))
@@ -2144,6 +2286,49 @@ def handle_search_youtube(message):
 # ОБРАБОТЧИКИ КНОПОК МЕНЮ
 # ============================================
 
+@bot.message_handler(commands=['search_vk', 'vk'])
+def handle_search_vk(message):
+    """Handles a search request in VK Music."""
+    if not vk_audio:
+        bot.reply_to(message, "VK Music is not configured.")
+        return
+
+    has_access, _ = ensure_subscription_access(message.from_user.id, message.chat.id, reply_target=message)
+    if not has_access:
+        return
+
+    query = message.text.replace('/search_vk', '').replace('/vk', '').strip()
+
+    if not query:
+        bot.reply_to(message, "📝 Использование: `/search_vk <запрос>`", parse_mode='Markdown')
+        return
+
+    wait_msg = bot.reply_to(message, f"🎧 Ищу '{query}' в VK Music...")
+    results = search_vk_music(query, limit=15)
+
+    if not results:
+        bot.edit_message_text(f"❌ По запросу '{query}' ничего не найдено в VK Music.",
+                              chat_id=message.chat.id,
+                              message_id=wait_msg.message_id)
+        return
+
+    message_text = show_search_results(message.chat.id, query, results, page=0)
+    keyboard = create_search_keyboard(results, page=0, show_all_button=False)
+
+    try:
+        bot.edit_message_text(message_text,
+                              chat_id=message.chat.id,
+                              message_id=wait_msg.message_id,
+                              parse_mode='Markdown',
+                              reply_markup=keyboard)
+    except Exception as e:
+        print(f"[!] Ошибка отправки VK результатов: {e}")
+        bot.edit_message_text(f"✅ Найдено {len(results)} результатов. Используйте кнопки ниже для выбора.",
+                              chat_id=message.chat.id,
+                              message_id=wait_msg.message_id,
+                              reply_markup=keyboard)
+
+
 @bot.message_handler(func=lambda m: m.text and any(x in m.text for x in ['music.yandex', 'youtube.com', 'youtu.be']))
 def handle_music_link(message):
     """Обрабатывает прямые ссылки на музыку"""
@@ -2298,7 +2483,8 @@ def handle_search_button(message):
                  "🎯 *Или используйте команды:*\n"
                  "• `/search_all <запрос>` - поиск везде\n"
                  "• `/search_yandex <запрос>` - только Яндекс\n"
-                 "• `/search_youtube <запрос>` - только YouTube",
+                 "• `/search_youtube <запрос>` - только YouTube\n"
+                 "• `/search_vk <запрос>` - только VK",
                  parse_mode='Markdown')
 
 
@@ -2317,6 +2503,30 @@ def handle_youtube_button(message):
                  "• Плейлисты (первое видео)\n\n"
                  "⚡ *Пример:* Просто отправьте `Shape of You`",
                  parse_mode='Markdown')
+
+
+@bot.message_handler(func=lambda message: message.text == '🎧 VK')
+def handle_vk_button(message):
+    if not vk_audio:
+        bot.reply_to(
+            message,
+            "🎧 *VK Music пока не настроен.*\n\n"
+            "Добавьте `VK_LOGIN` и `VK_PASSWORD` технического аккаунта бота в переменные окружения.",
+            parse_mode='Markdown'
+        )
+        return
+
+    bot.reply_to(
+        message,
+        "🎧 *VK Музыка*\n\n"
+        "Ищите треки в VK так же, как в других источниках.\n\n"
+        "*Как использовать:*\n"
+        "• Отправьте `/search_vk название песни`\n"
+        "• Или напишите название трека в чат, чтобы бот нашел его сразу во всех источниках\n\n"
+        "*Пример:*\n"
+        "`/search_vk Кино Группа крови`",
+        parse_mode='Markdown'
+    )
 
 
 @bot.message_handler(func=lambda message: message.text == '📁 Музыка')
@@ -2405,6 +2615,8 @@ def handle_menu_buttons_fallback(message):
         return handle_search_button(message)
     if 'YouTube' in normalized_text:
         return handle_youtube_button(message)
+    if 'VK' in normalized_text:
+        return handle_vk_button(message)
     if 'Музыка' in normalized_text and 'Поиск' not in normalized_text:
         return handle_music_folder(message)
     if 'Подкасты' in normalized_text:
@@ -2430,7 +2642,7 @@ def handle_auto_search(message):
 
         # Список кнопок меню, которые уже обработаны выше
         button_texts = [
-            '🎵 Мне понравилось', '🔍 Поиск музыки', '📺 YouTube',
+            '🎵 Мне понравилось', '🔍 Поиск музыки', '📺 YouTube', '🎧 VK',
             '📁 Музыка', '🎙️ Подкасты', '🗑️ Очистить кэш',
             '💎 Подписка', '📋 Помощь'
         ]
@@ -2890,6 +3102,9 @@ def handle_callback(call):
                 elif filter_type == "youtube":
                     filtered_results = [r for r in original_results if r.get('source') == 'youtube']
                     show_all_button = False
+                elif filter_type == "vk":
+                    filtered_results = [r for r in original_results if r.get('source') == 'vk']
+                    show_all_button = False
                 else:
                     filtered_results = original_results
                     show_all_button = True
@@ -3023,6 +3238,123 @@ def handle_callback(call):
                     )
 
             # Скачивание YouTube трека
+            elif parts[0] == "vk" and len(parts) >= 4:
+                try:
+                    user_id = call.from_user.id
+                    has_access, msg = database.check_subscription(user_id)
+                    if not has_access:
+                        bot.answer_callback_query(call.id, f"рџљ« Р”РѕСЃС‚СѓРї Р·Р°РєСЂС‹С‚")
+                        bot.send_message(
+                            chat_id,
+                            f"рџ”’ *Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰РµРЅ!*\n\n"
+                            f"{msg}\n\n"
+                            f"рџ’Ў РСЃРїРѕР»СЊР·СѓР№С‚Рµ /subscribe РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ РґРѕСЃС‚СѓРїР°",
+                            parse_mode='Markdown'
+                        )
+                        return
+
+                    owner_id = int(parts[1])
+                    track_id = int(parts[2])
+                    page = int(parts[3])
+
+                    selected_track = None
+                    if chat_id in user_search_history:
+                        history = user_search_history[chat_id]
+                        for track in history.get('results', []):
+                            if track.get('source') == 'vk' and int(track.get('owner_id', 0)) == owner_id and int(track.get('track_id', 0)) == track_id:
+                                selected_track = track
+                                break
+                        if not selected_track:
+                            for track in history.get('original_results', []):
+                                if track.get('source') == 'vk' and int(track.get('owner_id', 0)) == owner_id and int(track.get('track_id', 0)) == track_id:
+                                    selected_track = track
+                                    break
+
+                    safe_edit_message_text(
+                        "вљЎ *РЎРєР°С‡РёРІР°СЋ С‚СЂРµРє РёР· VK Music...*",
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        parse_mode='Markdown'
+                    )
+
+                    audio_path, title, performer, status = download_vk_track_fast(
+                        owner_id,
+                        track_id,
+                        track_url=selected_track.get('url') if selected_track else None,
+                        title_hint=selected_track.get('title') if selected_track else None,
+                        artist_hint=selected_track.get('artist') if selected_track else None,
+                        duration_seconds=selected_track.get('duration_seconds', 0) if selected_track else 0,
+                    )
+
+                    if status == "success" and audio_path and os.path.exists(audio_path):
+                        database.increment_download(user_id)
+                        file_type = "РїРѕРґРєР°СЃС‚" if audio_path.startswith(PODCASTS_DIR) else "РјСѓР·С‹РєР°"
+                        caption = f"рџЋ§ {title} (VK Music) | рџ“Ѓ {file_type}"
+
+                        success = send_audio_fast(
+                            chat_id=chat_id,
+                            audio_path=audio_path,
+                            title=(title or "VK Track")[:64],
+                            performer=(performer or "VK Artist")[:64],
+                            caption=caption
+                        )
+
+                        if success:
+                            if chat_id in user_search_history:
+                                history = user_search_history[chat_id]
+                                results = history['results']
+                                query = history['query']
+                                message_text = show_search_results(chat_id, query, results, page=page)
+                                keyboard = create_search_keyboard(results, page=page, show_all_button=True)
+                                safe_edit_message_text(
+                                    f"вњ… *РўСЂРµРє СЃРєР°С‡Р°РЅ!*\n\n"
+                                    f"рџЋ§ *{title}*\n"
+                                    f"рџ‘¤ *{performer}*\n\n"
+                                    f"вњЁ *РџСЂРѕРґРѕР»Р¶Р°Р№С‚Рµ РїРѕРёСЃРє:*",
+                                    chat_id=chat_id,
+                                    message_id=message_id,
+                                    parse_mode='Markdown',
+                                    reply_markup=keyboard
+                                )
+                            else:
+                                markup = types.InlineKeyboardMarkup()
+                                markup.add(types.InlineKeyboardButton("рџ”Ќ РќРѕРІС‹Р№ РїРѕРёСЃРє", callback_data="new_search"))
+                                safe_edit_message_text(
+                                    f"вњ… *РўСЂРµРє СѓСЃРїРµС€РЅРѕ СЃРєР°С‡Р°РЅ!*\n\n"
+                                    f"рџЋ§ *{title}*\n"
+                                    f"рџ‘¤ *{performer}*\n\n"
+                                    f"вњЁ РЎРєР°С‡Р°РЅРѕ РІ РїР°РїРєСѓ: {file_type}",
+                                    chat_id=chat_id,
+                                    message_id=message_id,
+                                    parse_mode='Markdown',
+                                    reply_markup=markup
+                                )
+                        else:
+                            safe_edit_message_text(
+                                "вќЊ *РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ С‚СЂРµРє*",
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                parse_mode='Markdown'
+                            )
+                    else:
+                        safe_edit_message_text(
+                            f"вќЊ *РћС€РёР±РєР° СЃРєР°С‡РёРІР°РЅРёСЏ VK*\n\n"
+                            f"РџСЂРёС‡РёРЅР°: {status}",
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            parse_mode='Markdown'
+                        )
+                except Exception as e:
+                    print(f"[!] РћС€РёР±РєР° СЃРєР°С‡РёРІР°РЅРёСЏ VK С‚СЂРµРєР°: {e}")
+                    traceback.print_exc()
+                    safe_edit_message_text(
+                        f"вќЊ *РћС€РёР±РєР° РїСЂРё СЃРєР°С‡РёРІР°РЅРёРё VK*\n\n"
+                        f"РџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰Рµ СЂР°Р·.",
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        parse_mode='Markdown'
+                    )
+
             elif parts[0] == "yt" and len(parts) >= 3:
                 try:
                     # Проверка доступа перед скачиванием

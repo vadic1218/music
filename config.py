@@ -23,6 +23,9 @@ ADMIN_IDS = _parse_admin_ids(os.environ.get('ADMIN_IDS', ''))
 
 # Токен Яндекс.Музыки (опционально)
 YANDEX_MUSIC_TOKEN = os.environ.get('YANDEX_MUSIC_TOKEN', '').strip()
+VK_LOGIN = os.environ.get('VK_LOGIN', '').strip()
+VK_PASSWORD = os.environ.get('VK_PASSWORD', '').strip()
+VK_ACCESS_TOKEN = os.environ.get('VK_ACCESS_TOKEN', '').strip()
 
 DATA_DIR = Path(os.environ.get('DATA_DIR', BASE_DIR / 'data')).expanduser()
 CACHE_DIR = Path(os.environ.get('CACHE_DIR', BASE_DIR / 'audio_cache')).expanduser()
