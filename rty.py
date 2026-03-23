@@ -1391,23 +1391,23 @@ def ensure_subscription_access(user_id, chat_id=None, reply_target=None, send_de
 def build_main_menu_keyboard():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(
-        types.KeyboardButton('???? ?????? ??????????????????????'),
-        types.KeyboardButton('???? ?????????? ????????????')
+        types.KeyboardButton('🎵 Мне понравилось'),
+        types.KeyboardButton('🔍 Поиск музыки')
     )
     keyboard.row(
-        types.KeyboardButton('???? ????????????'),
-        types.KeyboardButton('??????? ????????????????'),
-        types.KeyboardButton('??????? ???????????????? ??????')
+        types.KeyboardButton('📁 Музыка'),
+        types.KeyboardButton('🎙️ Подкасты'),
+        types.KeyboardButton('🗑️ Очистить кэш')
     )
     keyboard.row(
-        types.KeyboardButton('???? ????????????????'),
-        types.KeyboardButton('???? ?????????? ??????????')
+        types.KeyboardButton('💎 Подписка'),
+        types.KeyboardButton('📝 Текст песни')
     )
     if MINI_APP_URL:
-        keyboard.row(types.KeyboardButton('???? Mini App', web_app=types.WebAppInfo(url=MINI_APP_URL)))
-    keyboard.row(types.KeyboardButton('???? ????????????'))
+        keyboard.row(types.KeyboardButton('🚀 Mini App', web_app=types.WebAppInfo(url=MINI_APP_URL)))
+    keyboard.row(types.KeyboardButton('📋 Помощь'))
     if ENABLE_VK:
-        keyboard.row(types.KeyboardButton('???? VK'))
+        keyboard.row(types.KeyboardButton('🎧 VK'))
     return keyboard
 
 
@@ -1441,19 +1441,20 @@ def is_menu_button_text(text):
 
     normalized_text = text.strip()
     menu_labels = [
-        '?????? ??????????????????????',
-        '?????????? ????????????',
-        '????????????',
-        '????????????????',
-        '???????????????? ??????',
-        '????????????????',
-        '?????????? ??????????',
-        '????????????',
+        'Мне понравилось',
+        'Поиск музыки',
+        'Музыка',
+        'Подкасты',
+        'Очистить кэш',
+        'Подписка',
+        'Текст песни',
+        'Помощь',
         'Mini App',
     ]
     if ENABLE_VK:
         menu_labels.append('VK')
     return any(label in normalized_text for label in menu_labels)
+
 
 def check_access(user_id):
     """Checks whether the user has an active subscription."""
@@ -2687,7 +2688,6 @@ def handle_subscribe(message):
             pass
 
 
-# РћР±РЅРѕРІР»РµРЅРЅР°СЏ С„СѓРЅРєС†РёСЏ send_welcome (СѓР±СЂР°С‚СЊ СѓРїРѕРјРёРЅР°РЅРёРµ РїСЂРѕРјРѕРєРѕРґРѕРІ)
 @bot.message_handler(func=lambda message: bool(message.text) and 'Mini App' in message.text)
 def open_mini_app(message):
     markup = build_mini_app_markup()
@@ -2700,14 +2700,13 @@ def open_mini_app(message):
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    """РќР°С‡Р°Р»СЊРЅРѕРµ РїСЂРёРІРµС‚СЃС‚РІРёРµ"""
+    """Начальное приветствие."""
     try:
         user_id = message.from_user.id
         username = message.from_user.username
         first_name = message.from_user.first_name
-        safe_first_name = escape_markdown(first_name or '????')
+        safe_first_name = escape_markdown(first_name or 'друг')
 
-        # Р”РѕР±Р°РІР»СЏРµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РІ Р±Р°Р·Сѓ
         database.add_user(
             user_id=user_id,
             username=username,
@@ -2717,85 +2716,75 @@ def send_welcome(message):
             is_premium=message.from_user.is_premium if hasattr(message.from_user, 'is_premium') else False
         )
 
-        # РЎРѕР·РґР°РµРј РєР»Р°РІРёР°С‚СѓСЂСѓ
         keyboard = build_main_menu_keyboard()
-        vk_feature_text = "вЂў рџЋ§ *VK Music* - РїРѕРёСЃРє Рё СЃРєР°С‡РёРІР°РЅРёРµ С‚СЂРµРєРѕРІ С‡РµСЂРµР· VK\n" if ENABLE_VK else ""
-        lyrics_feature_text = "вЂў рџ“ќ *РўРµРєСЃС‚ РїРµСЃРЅРё* - РїРѕРёСЃРє С‚РµРєСЃС‚Р° С‡РµСЂРµР· РЇРЅРґРµРєСЃ.РњСѓР·С‹РєСѓ Рё Genius\n"
+        is_admin = user_id in ADMIN_IDS
 
-        # РџСЂРѕРІРµСЂСЏРµРј, СЏРІР»СЏРµС‚СЃСЏ Р»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј
-        if user_id in ADMIN_IDS:
-            admin_text = "вљЎ *Р’С‹ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ!* Р’Р°Рј РґРѕСЃС‚СѓРїРЅС‹ РІСЃРµ С„СѓРЅРєС†РёРё Р±РѕС‚Р°!"
-            welcome_text = (
-                f"рџЋµ *РџСЂРёРІРµС‚, РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ {safe_first_name or 'РґСЂСѓРі'}!*\n\n"
-                f"{admin_text}\n\n"
-                "*Р”РѕР±СЂРѕ РїРѕР¶Р°Р»РѕРІР°С‚СЊ РІ СѓРЅРёРІРµСЂСЃР°Р»СЊРЅС‹Р№ РјСѓР·С‹РєР°Р»СЊРЅС‹Р№ Р±РѕС‚!*\n\n"
+        features = [
+            '• 🔍 *Автопоиск* — отправьте название песни или исполнителя',
+            '• 🎵 *Яндекс.Музыка* — поиск, скачивание и синхронизация лайков',
+            '• 📺 *YouTube* — поиск и скачивание треков',
+            '• 📝 *Текст песни* — поиск текста через Яндекс и Genius',
+        ]
+        if ENABLE_VK:
+            features.append('• 🎧 *VK Music* — поиск и скачивание через VK')
+        if MINI_APP_URL:
+            features.append('• 🚀 *Mini App* — отдельный интерфейс с плеером, очередью и библиотекой')
 
-                "вљЎ *Р§С‚Рѕ СѓРјРµРµС‚ Р±РѕС‚:*\n"
-                "вЂў рџ”Ќ *РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРёР№ РїРѕРёСЃРє* - РїСЂРѕСЃС‚Рѕ РѕС‚РїСЂР°РІСЊС‚Рµ РЅР°Р·РІР°РЅРёРµ РїРµСЃРЅРё\n"
-                "вЂў рџЋµ *РЇРЅРґРµРєСЃ.РњСѓР·С‹РєР°* - РїРѕРёСЃРє Рё СЃРєР°С‡РёРІР°РЅРёРµ С‚СЂРµРєРѕРІ\n"
-                "вЂў рџ“є *YouTube* - СЃРєР°С‡РёРІР°РЅРёРµ РјСѓР·С‹РєРё СЃ YouTube\n"
-                f"{vk_feature_text}"
-                f"{lyrics_feature_text}"
-                "вЂў рџ’Ћ *PREMIUM РїРѕРґРїРёСЃРєР°* - 49в‚Ѕ/РјРµСЃСЏС† РґР»СЏ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№\n\n"
+        commands = [
+            '• /subscribe — информация о подписке',
+            '• /status — проверка подключений',
+            '• /clear_cache — очистить кэш',
+        ]
+        if is_admin:
+            commands.extend([
+                '• /admin_create_promo — создать промокод',
+                '• /admin_stats — статистика бота',
+            ])
 
-                "рџ“‹ *РћСЃРЅРѕРІРЅС‹Рµ РєРѕРјР°РЅРґС‹:*\n"
-                "вЂў /subscribe - РёРЅС„РѕСЂРјР°С†РёСЏ Рѕ РїРѕРґРїРёСЃРєРµ\n"
-                "вЂў /admin_create_promo - СЃРѕР·РґР°С‚СЊ РїСЂРѕРјРѕРєРѕРґ\n"
-                "вЂў /admin_stats - СЃС‚Р°С‚РёСЃС‚РёРєР° Р±РѕС‚Р°\n"
-                "вЂў /status - СЃС‚Р°С‚СѓСЃ Р±РѕС‚Р°\n"
-                "вЂў /clear_cache - РѕС‡РёСЃС‚РёС‚СЊ РєСЌС€\n\n"
+        header = '⚡ *Вы администратор!* Вам доступны все функции бота.\n\n' if is_admin else ''
+        welcome_text = (
+            f"🎵 *Привет, {safe_first_name}!*\n\n"
+            f"{header}"
+            "*Добро пожаловать в KSB Music Bot!*\n\n"
+            "*Возможности:*\n"
+            + "\n".join(features)
+            + "\n\n*Команды:*\n"
+            + "\n".join(commands)
+            + "\n\n🚀 *Начните с поиска музыки!*"
+        )
 
-                "рџљЂ *РќР°С‡РЅРёС‚Рµ СЃ РїРѕРёСЃРєР° РјСѓР·С‹РєРё!*"
-            )
-        else:
-            welcome_text = (
-                f"рџЋµ *РџСЂРёРІРµС‚, {safe_first_name or 'РґСЂСѓРі'}!*\n\n"
-                "*Р”РѕР±СЂРѕ РїРѕР¶Р°Р»РѕРІР°С‚СЊ РІ СѓРЅРёРІРµСЂСЃР°Р»СЊРЅС‹Р№ РјСѓР·С‹РєР°Р»СЊРЅС‹Р№ Р±РѕС‚!*\n\n"
-
-                "вљЎ *Р§С‚Рѕ СѓРјРµРµС‚ Р±РѕС‚:*\n"
-                "вЂў рџ”Ќ *РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРёР№ РїРѕРёСЃРє* - РїСЂРѕСЃС‚Рѕ РѕС‚РїСЂР°РІСЊС‚Рµ РЅР°Р·РІР°РЅРёРµ РїРµСЃРЅРё\n"
-                "вЂў рџЋµ *РЇРЅРґРµРєСЃ.РњСѓР·С‹РєР°* - РїРѕРёСЃРє Рё СЃРєР°С‡РёРІР°РЅРёРµ С‚СЂРµРєРѕРІ\n"
-                "вЂў рџ“є *YouTube* - СЃРєР°С‡РёРІР°РЅРёРµ РјСѓР·С‹РєРё СЃ YouTube\n"
-                f"{vk_feature_text}"
-                f"{lyrics_feature_text}"
-                "вЂў рџ’Ћ *PREMIUM РїРѕРґРїРёСЃРєР°* - 49в‚Ѕ/РјРµСЃСЏС†\n\n"
-
-                "рџ“‹ *РћСЃРЅРѕРІРЅС‹Рµ РєРѕРјР°РЅРґС‹:*\n"
-                "вЂў /subscribe - РёРЅС„РѕСЂРјР°С†РёСЏ Рѕ РїРѕРґРїРёСЃРєРµ\n"
-                "вЂў /status - СЃС‚Р°С‚СѓСЃ Р±РѕС‚Р°\n"
-                "вЂў /clear_cache - РѕС‡РёСЃС‚РёС‚СЊ РєСЌС€\n\n"
-
-                "рџљЂ *РќР°С‡РЅРёС‚Рµ СЃ РїРѕРёСЃРєР° РјСѓР·С‹РєРё!*"
-            )
-
-        bot.reply_to(message, welcome_text, parse_mode='Markdown',
-                     disable_web_page_preview=True, reply_markup=keyboard)
+        bot.reply_to(
+            message,
+            welcome_text,
+            parse_mode='Markdown',
+            disable_web_page_preview=True,
+            reply_markup=keyboard
+        )
 
         mini_app_markup = build_mini_app_markup()
         if mini_app_markup:
             bot.send_message(
                 message.chat.id,
-                '\U0001f680 *Mini App \u0433\u043e\u0442\u043e\u0432.*\n\n\u041e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u043f\u043b\u0435\u0435\u0440 \u0438 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0443 \u0432 \u043e\u0442\u0434\u0435\u043b\u044c\u043d\u043e\u043c \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0435.',
+                '🚀 *Mini App готов.*\n\nОткройте плеер и библиотеку в отдельном интерфейсе.',
                 parse_mode='Markdown',
                 reply_markup=mini_app_markup
             )
 
-        has_access, msg = database.check_subscription(user_id)
+        has_access, _ = database.check_subscription(user_id)
         if not has_access and user_id not in ADMIN_IDS:
             time.sleep(1)
             bot.send_message(
                 message.chat.id,
-                "рџ’Ў *РЎРѕРІРµС‚:* Р”Р»СЏ РїРѕР»РЅРѕРіРѕ РґРѕСЃС‚СѓРїР° РєРѕ РІСЃРµРј С„СѓРЅРєС†РёСЏРј РѕС„РѕСЂРјРёС‚Рµ РїРѕРґРїРёСЃРєСѓ "
-                "РёР»Рё Р°РєС‚РёРІРёСЂСѓР№С‚Рµ РїСЂРѕРјРѕРєРѕРґ РєРѕРјР°РЅРґРѕР№ /promo РљРћР”",
+                '🔒 *Доступ к полному функционалу откроется после подписки или промокода.*\n\nИспользуйте /subscribe или /promo <код>.',
                 parse_mode='Markdown'
             )
 
     except Exception as e:
-        print(f"[ERROR] РћС€РёР±РєР° РІ РѕР±СЂР°Р±РѕС‚С‡РёРєРµ start: {e}")
+        print(f"[ERROR] Ошибка в send_welcome: {e}")
         traceback.print_exc()
         bot.reply_to(
             message,
-            "Р”РѕР±СЂРѕ РїРѕР¶Р°Р»РѕРІР°С‚СЊ! РСЃРїРѕР»СЊР·СѓР№С‚Рµ РєРЅРѕРїРєРё РјРµРЅСЋ РґР»СЏ РЅР°РІРёРіР°С†РёРё.",
+            'Добро пожаловать! Используйте кнопки меню для навигации.',
             reply_markup=build_main_menu_keyboard()
         )
 
@@ -3223,7 +3212,7 @@ def handle_music_link(message):
             pass
 
 
-@bot.message_handler(func=lambda message: message.text == 'рџЋµ РњРЅРµ РїРѕРЅСЂР°РІРёР»РѕСЃСЊ')
+@bot.message_handler(func=lambda message: message.text == '🎵 Мне понравилось')
 def handle_liked_button(message):
     if not ym_client:
         bot.reply_to(
@@ -3237,7 +3226,7 @@ def handle_liked_button(message):
     if user_id not in ADMIN_IDS:
         bot.reply_to(
             message,
-            "вќЊ РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ *В«РњРЅРµ РїРѕРЅСЂР°РІРёР»РѕСЃСЊВ»* РґРѕСЃС‚СѓРїРЅР° С‚РѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂСѓ, РїРѕС‚РѕРјСѓ С‡С‚Рѕ РёСЃРїРѕР»СЊР·СѓРµС‚ РѕРґРёРЅ РѕР±С‰РёР№ Р°РєРєР°СѓРЅС‚ РЇРЅРґРµРєСЃ.РњСѓР·С‹РєРё Р±РѕС‚Р°.",
+            "❌ Синхронизация раздела *«Мне понравилось»* доступна только администратору, потому что использует один общий аккаунт Яндекс.Музыки бота.",
             parse_mode='Markdown'
         )
         return
@@ -3270,64 +3259,57 @@ def handle_liked_button(message):
         daemon=True
     ).start()
 
-@bot.message_handler(func=lambda message: message.text == 'рџ”Ќ РџРѕРёСЃРє РјСѓР·С‹РєРё')
+@bot.message_handler(func=lambda message: message.text == '🔍 Поиск музыки')
 def handle_search_button(message):
     bot.reply_to(message,
-                 "рџ”Ќ *РџРѕРёСЃРє РјСѓР·С‹РєРё*\n\n"
-                 "рџЋµ *РџСЂРѕСЃС‚Рѕ РѕС‚РїСЂР°РІСЊС‚Рµ РІ С‡Р°С‚:*\n"
-                 "вЂў РќР°Р·РІР°РЅРёРµ РїРµСЃРЅРё\n"
-                 "вЂў РРјСЏ РёСЃРїРѕР»РЅРёС‚РµР»СЏ\n"
-                 "вЂў РЎСЃС‹Р»РєСѓ РЅР° С‚СЂРµРє\n\n"
-                 "вљЎ *РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРёР№ РїРѕРёСЃРє РІРѕ РІСЃРµС… РёСЃС‚РѕС‡РЅРёРєР°С…!*\n\n"
-                 "рџ’Ў *РџСЂРёРјРµСЂС‹:*\n"
-                 "вЂў `Shape of You`\n"
-                 "вЂў `Imagine Dragons Believer`\n"
-                 "вЂў `https://youtube.com/...`\n\n"
-                 "рџЋЇ *РР»Рё РёСЃРїРѕР»СЊР·СѓР№С‚Рµ РєРѕРјР°РЅРґС‹:*\n"
-                 "вЂў `/search_all <Р·Р°РїСЂРѕСЃ>` - РїРѕРёСЃРє РІРµР·РґРµ\n"
-                 "вЂў `/search_yandex <Р·Р°РїСЂРѕСЃ>` - С‚РѕР»СЊРєРѕ РЇРЅРґРµРєСЃ\n"
-                 "вЂў `/search_youtube <Р·Р°РїСЂРѕСЃ>` - С‚РѕР»СЊРєРѕ YouTube"
-                 + ("\nвЂў `/search_vk <Р·Р°РїСЂРѕСЃ>` - С‚РѕР»СЊРєРѕ VK" if ENABLE_VK else ""),
+                 "🔍 *Поиск музыки*\n\n"
+                 "🎵 *Просто отправьте в чат:*\n"
+                 "• название песни\n"
+                 "• имя исполнителя\n"
+                 "• ссылку на трек\n\n"
+                 "⚡ *Автоматический поиск работает сразу по всем источникам.*\n\n"
+                 "💡 *Примеры:*\n"
+                 "• `Shape of You`\n"
+                 "• `Imagine Dragons Believer`\n"
+                 "• `https://youtube.com/...`\n\n"
+                 "🎯 *Команды:*\n"
+                 "• `/search_all <запрос>` — искать везде\n"
+                 "• `/search_yandex <запрос>` — только Яндекс\n"
+                 "• `/search_youtube <запрос>` — только YouTube"
+                 + ("\n• `/search_vk <запрос>` — только VK" if ENABLE_VK else ""),
                  parse_mode='Markdown')
 
 
-@bot.message_handler(func=lambda message: message.text == 'рџ“є YouTube')
+@bot.message_handler(func=lambda message: message.text == '📺 YouTube')
 def handle_youtube_button(message):
     bot.reply_to(message,
-                 "рџ“є *YouTube РњСѓР·С‹РєР°*\n\n"
-                 "рџЋµ *РљР°Рє СЃРєР°С‡РёРІР°С‚СЊ:*\n"
-                 "1. РћС‚РїСЂР°РІСЊС‚Рµ РЅР°Р·РІР°РЅРёРµ РїРµСЃРЅРё РІ С‡Р°С‚\n"
-                 "2. РР»Рё РѕС‚РїСЂР°РІСЊС‚Рµ СЃСЃС‹Р»РєСѓ РЅР° РІРёРґРµРѕ\n"
-                 "3. Р’С‹Р±РµСЂРёС‚Рµ С‚СЂРµРє РёР· СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ\n"
-                 "4. РЎРєР°С‡Р°Р№С‚Рµ Р°СѓРґРёРѕС„Р°Р№Р»\n\n"
-                 "рџ”— *РџРѕРґРґРµСЂР¶РёРІР°РµРјС‹Рµ СЃСЃС‹Р»РєРё:*\n"
-                 "вЂў Р’РёРґРµРѕ: `youtube.com/watch?...`\n"
-                 "вЂў РљРѕСЂРѕС‚РєРёРµ: `youtu.be/...`\n"
-                 "вЂў РџР»РµР№Р»РёСЃС‚С‹ (РїРµСЂРІРѕРµ РІРёРґРµРѕ)\n\n"
-                 "вљЎ *РџСЂРёРјРµСЂ:* РџСЂРѕСЃС‚Рѕ РѕС‚РїСЂР°РІСЊС‚Рµ `Shape of You`",
+                 "📺 *YouTube Музыка*\n\n"
+                 "🎵 *Как использовать:*\n"
+                 "1. Отправьте название песни в чат\n"
+                 "2. Или отправьте ссылку на видео\n"
+                 "3. Выберите трек из результатов\n"
+                 "4. Скачайте аудиофайл\n\n"
+                 "🔗 *Поддерживаемые ссылки:*\n"
+                 "• Видео: `youtube.com/watch?...`\n"
+                 "• Короткие: `youtu.be/...`\n"
+                 "• Плейлисты: первое видео из плейлиста\n\n"
+                 "⚡ *Пример:* `Shape of You`",
                  parse_mode='Markdown')
 
 
-@bot.message_handler(func=lambda message: message.text == 'рџЋ§ VK')
+@bot.message_handler(func=lambda message: message.text == '🎧 VK')
 def handle_vk_button(message):
     if not vk_audio:
         bot.reply_to(
             message,
-            "рџЋ§ *VK Music РїРѕРєР° РЅРµ РЅР°СЃС‚СЂРѕРµРЅ.*\n\n"
-            "Р”РѕР±Р°РІСЊС‚Рµ `VK_LOGIN` Рё `VK_PASSWORD` С‚РµС…РЅРёС‡РµСЃРєРѕРіРѕ Р°РєРєР°СѓРЅС‚Р° Р±РѕС‚Р° РІ РїРµСЂРµРјРµРЅРЅС‹Рµ РѕРєСЂСѓР¶РµРЅРёСЏ.",
+            "🎧 *VK Music пока не настроен.*\n\nДобавьте `VK_LOGIN` и `VK_PASSWORD` технического аккаунта бота в переменные окружения.",
             parse_mode='Markdown'
         )
         return
 
     bot.reply_to(
         message,
-        "рџЋ§ *VK РњСѓР·С‹РєР°*\n\n"
-        "РС‰РёС‚Рµ С‚СЂРµРєРё РІ VK С‚Р°Рє Р¶Рµ, РєР°Рє РІ РґСЂСѓРіРёС… РёСЃС‚РѕС‡РЅРёРєР°С….\n\n"
-        "*РљР°Рє РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ:*\n"
-        "вЂў РћС‚РїСЂР°РІСЊС‚Рµ `/search_vk РЅР°Р·РІР°РЅРёРµ РїРµСЃРЅРё`\n"
-        "вЂў РР»Рё РЅР°РїРёС€РёС‚Рµ РЅР°Р·РІР°РЅРёРµ С‚СЂРµРєР° РІ С‡Р°С‚, С‡С‚РѕР±С‹ Р±РѕС‚ РЅР°С€РµР» РµРіРѕ СЃСЂР°Р·Сѓ РІРѕ РІСЃРµС… РёСЃС‚РѕС‡РЅРёРєР°С…\n\n"
-        "*РџСЂРёРјРµСЂ:*\n"
-        "`/search_vk РљРёРЅРѕ Р“СЂСѓРїРїР° РєСЂРѕРІРё`",
+        "🎧 *VK Музыка*\n\nИщите треки в VK так же, как и в других источниках.\n\n*Как использовать:*\n• Отправьте `/search_vk название песни`\n• Или напишите название трека в чат, чтобы бот искал сразу везде\n\n*Пример:*\n`/search_vk Кино Группа крови`",
         parse_mode='Markdown'
     )
 
@@ -3352,7 +3334,7 @@ def build_ytdlp_base_options():
     }
 
 
-@bot.message_handler(func=lambda message: message.text == 'рџ“Ѓ РњСѓР·С‹РєР°')
+@bot.message_handler(func=lambda message: message.text == '📁 Музыка')
 def handle_music_folder(message):
     """РџРѕРєР°Р·С‹РІР°РµС‚ СЃРїРёСЃРѕРє РјСѓР·С‹РєР°Р»СЊРЅС‹С… С„Р°Р№Р»РѕРІ"""
     files = get_folder_files(MUSIC_DIR)
@@ -3378,7 +3360,7 @@ def handle_music_folder(message):
     bot.reply_to(message, message_text, parse_mode='Markdown', reply_markup=keyboard)
 
 
-@bot.message_handler(func=lambda message: message.text == 'рџЋ™пёЏ РџРѕРґРєР°СЃС‚С‹')
+@bot.message_handler(func=lambda message: message.text == '🎙️ Подкасты')
 def handle_podcasts_folder(message):
     """РџРѕРєР°Р·С‹РІР°РµС‚ СЃРїРёСЃРѕРє РїРѕРґРєР°СЃС‚РѕРІ"""
     files = get_folder_files(PODCASTS_DIR)
@@ -3404,12 +3386,12 @@ def handle_podcasts_folder(message):
     bot.reply_to(message, message_text, parse_mode='Markdown', reply_markup=keyboard)
 
 
-@bot.message_handler(func=lambda message: message.text == 'рџ—‘пёЏ РћС‡РёСЃС‚РёС‚СЊ РєСЌС€')
+@bot.message_handler(func=lambda message: message.text == '🗑️ Очистить кэш')
 def handle_clear_cache_button(message):
     handle_clear_cache(message)
 
 
-@bot.message_handler(func=lambda message: message.text == 'рџ’Ћ РџРѕРґРїРёСЃРєР°')
+@bot.message_handler(func=lambda message: message.text == '💎 Подписка')
 def handle_subscribe_button(message):
     handle_subscribe(message)
 
@@ -3424,11 +3406,7 @@ def handle_lyrics_command(message):
     if not query:
         bot.reply_to(
             message,
-            "рџ“ќ *РўРµРєСЃС‚ РїРµСЃРЅРё*\n\n"
-            "РћС‚РїСЂР°РІСЊС‚Рµ РЅР°Р·РІР°РЅРёРµ РїРµСЃРЅРё РІРјРµСЃС‚Рµ СЃ РёСЃРїРѕР»РЅРёС‚РµР»РµРј.\n\n"
-            "*РџСЂРёРјРµСЂС‹:*\n"
-            "вЂў `/lyrics РѕР№ РґР° oxxxymiron`\n"
-            "вЂў `С‚РµРєСЃС‚ РіСЂСѓРїРїР° РєСЂРѕРІРё РєРёРЅРѕ`",
+            "📝 *Текст песни*\n\nОтправьте название песни вместе с исполнителем.\n\n*Примеры:*\n• `/lyrics ой да oxxxymiron`\n• `текст группа крови кино`",
             parse_mode='Markdown'
         )
         return
@@ -3436,22 +3414,17 @@ def handle_lyrics_command(message):
     prompt_lyrics_source(message, query)
 
 
-@bot.message_handler(func=lambda message: message.text == 'рџ“ќ РўРµРєСЃС‚ РїРµСЃРЅРё')
+@bot.message_handler(func=lambda message: message.text == '📝 Текст песни')
 def handle_lyrics_button(message):
     set_pending_action(message.chat.id, message.from_user.id, "lyrics_lookup")
     bot.reply_to(
         message,
-        "рџ“ќ *РўРµРєСЃС‚ РїРµСЃРЅРё*\n\n"
-        "РџСЂРѕСЃС‚Рѕ РѕС‚РїСЂР°РІСЊС‚Рµ СЃР»РµРґСѓСЋС‰РёРј СЃРѕРѕР±С‰РµРЅРёРµРј РЅР°Р·РІР°РЅРёРµ РїРµСЃРЅРё Рё РёСЃРїРѕР»РЅРёС‚РµР»СЏ.\n\n"
-        "РџРѕСЃР»Рµ СЌС‚РѕРіРѕ Р±РѕС‚ РїСЂРµРґР»РѕР¶РёС‚ РІС‹Р±СЂР°С‚СЊ РёСЃС‚РѕС‡РЅРёРє: *РђРІС‚Рѕ*, *РЇРЅРґРµРєСЃ* РёР»Рё *Genius*.\n\n"
-        "*РџСЂРёРјРµСЂС‹:*\n"
-        "вЂў РѕР№ РґР° oxxxymiron\n"
-        "вЂў РіСЂСѓРїРїР° РєСЂРѕРІРё РєРёРЅРѕ",
+        "📝 *Текст песни*\n\nПросто отправьте следующим сообщением название песни и исполнителя.\n\nПосле этого бот предложит выбрать источник: *Авто*, *Яндекс* или *Genius*.\n\n*Примеры:*\n• ой да oxxxymiron\n• группа крови кино",
         parse_mode='Markdown'
     )
 
 
-@bot.message_handler(func=lambda message: message.text == 'рџ“‹ РџРѕРјРѕС‰СЊ')
+@bot.message_handler(func=lambda message: message.text == '📋 Помощь')
 def handle_help_button(message):
     send_welcome(message)
 
@@ -3460,7 +3433,7 @@ def handle_help_button(message):
 def handle_menu_command(message):
     bot.reply_to(
         message,
-        "Р“Р»Р°РІРЅРѕРµ РјРµРЅСЋ:",
+        "Главное меню:",
         reply_markup=build_main_menu_keyboard()
     )
 
@@ -3469,23 +3442,23 @@ def handle_menu_command(message):
 def handle_menu_buttons_fallback(message):
     normalized_text = message.text.strip()
 
-    if 'РњРЅРµ РїРѕРЅСЂР°РІРёР»РѕСЃСЊ' in normalized_text:
+    if 'Мне понравилось' in normalized_text:
         return handle_liked_button(message)
-    if 'РџРѕРёСЃРє РјСѓР·С‹РєРё' in normalized_text:
+    if 'Поиск музыки' in normalized_text:
         return handle_search_button(message)
     if 'YouTube' in normalized_text:
         return handle_youtube_button(message)
     if 'VK' in normalized_text:
         return handle_vk_button(message)
-    if 'РњСѓР·С‹РєР°' in normalized_text and 'РџРѕРёСЃРє' not in normalized_text:
+    if 'Музыка' in normalized_text and 'Поиск' not in normalized_text:
         return handle_music_folder(message)
-    if 'РџРѕРґРєР°СЃС‚С‹' in normalized_text:
+    if 'Подкасты' in normalized_text:
         return handle_podcasts_folder(message)
-    if 'РћС‡РёСЃС‚РёС‚СЊ РєСЌС€' in normalized_text:
+    if 'Очистить кэш' in normalized_text:
         return handle_clear_cache_button(message)
-    if 'РџРѕРґРїРёСЃРєР°' in normalized_text:
+    if 'Подписка' in normalized_text:
         return handle_subscribe_button(message)
-    if 'РўРµРєСЃС‚ РїРµСЃРЅРё' in normalized_text:
+    if 'Текст песни' in normalized_text:
         return handle_lyrics_button(message)
     if 'РџРѕРјРѕС‰СЊ' in normalized_text:
         return handle_help_button(message)
@@ -3518,12 +3491,14 @@ def handle_auto_search(message):
 
         # РЎРїРёСЃРѕРє РєРЅРѕРїРѕРє РјРµРЅСЋ, РєРѕС‚РѕСЂС‹Рµ СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅС‹ РІС‹С€Рµ
         button_texts = [
-            'рџЋµ РњРЅРµ РїРѕРЅСЂР°РІРёР»РѕСЃСЊ', 'рџ”Ќ РџРѕРёСЃРє РјСѓР·С‹РєРё',
-            'рџ“Ѓ РњСѓР·С‹РєР°', 'рџЋ™пёЏ РџРѕРґРєР°СЃС‚С‹', 'рџ—‘пёЏ РћС‡РёСЃС‚РёС‚СЊ РєСЌС€',
-            'рџ’Ћ РџРѕРґРїРёСЃРєР°', 'рџ“ќ РўРµРєСЃС‚ РїРµСЃРЅРё', 'рџ“‹ РџРѕРјРѕС‰СЊ'
+            '🎵 Мне понравилось', '🔍 Поиск музыки',
+            '📁 Музыка', '🎙️ Подкасты', '🗑️ Очистить кэш',
+            '💎 Подписка', '📝 Текст песни', '📋 Помощь'
         ]
         if ENABLE_VK:
-            button_texts.append('рџЋ§ VK')
+            button_texts.append('🎧 VK')
+        if MINI_APP_URL:
+            button_texts.append('🚀 Mini App')
 
         if message.text in button_texts:
             return
@@ -3541,11 +3516,11 @@ def handle_auto_search(message):
             return prompt_lyrics_source(message, query)
 
         if len(query) > 100:
-            bot.reply_to(message, "вќЊ Р—Р°РїСЂРѕСЃ СЃР»РёС€РєРѕРј РґР»РёРЅРЅС‹Р№. РџРѕР¶Р°Р»СѓР№СЃС‚Р°, СѓРєР°Р¶РёС‚Рµ Р±РѕР»РµРµ РєРѕСЂРѕС‚РєРѕРµ РЅР°Р·РІР°РЅРёРµ.")
+            bot.reply_to(message, "❌ Запрос слишком длинный. Пожалуйста, укажите более короткое название.")
             return
 
         lowered_query = query.lower()
-        if lowered_query.startswith('С‚РµРєСЃС‚ '):
+        if lowered_query.startswith('текст '):
             return prompt_lyrics_source(message, query[6:].strip())
 
         if query.lower() in ['РїРѕРёСЃРє', 'search', 'РёСЃРєР°С‚СЊ', 'РјСѓР·С‹РєР°', 'РїРµСЃРЅСЏ']:
