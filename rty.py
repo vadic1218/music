@@ -3438,25 +3438,26 @@ def build_ytdlp_base_options():
 
 @bot.message_handler(func=lambda message: message.text == '📁 Музыка')
 def handle_music_folder(message):
-    """РџРѕРєР°Р·С‹РІР°РµС‚ СЃРїРёСЃРѕРє РјСѓР·С‹РєР°Р»СЊРЅС‹С… С„Р°Р№Р»РѕРІ"""
+    """Показывает список музыкальных файлов."""
     files = get_folder_files(MUSIC_DIR)
 
     if not files:
         bot.reply_to(message,
-                     "рџЋµ *РџР°РїРєР° СЃ РјСѓР·С‹РєРѕР№*\n\n"
-                     "рџ“­ РџР°РїРєР° РїСѓСЃС‚Р°\n\n"
-                     "рџ’Ў *РЎРѕРІРµС‚:*\n"
-                     "вЂў РћС‚РїСЂР°РІСЊС‚Рµ РЅР°Р·РІР°РЅРёРµ РїРµСЃРЅРё РІ С‡Р°С‚\n"
-                     "вЂў РЎРєР°С‡Р°Р№С‚Рµ С‚СЂРµРєРё РёР· РїРѕРёСЃРєР°\n"
-                     "вЂў Р¤Р°Р№Р»С‹ РїРѕСЏРІСЏС‚СЃСЏ Р·РґРµСЃСЊ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё")
+                     "🎵 *Папка с музыкой*\n\n"
+                     "📭 Папка пуста\n\n"
+                     "💡 *Совет:*\n"
+                     "• Отправьте название песни в чат\n"
+                     "• Скачайте треки из поиска\n"
+                     "• Файлы появятся здесь автоматически",
+                     parse_mode='Markdown')
         return
 
     total_size = sum(f['size'] for f in files)
-    message_text = (f"рџЋµ *РџР°РїРєР° СЃ РјСѓР·С‹РєРѕР№*\n\n"
-                    f"рџ“Љ *РЎС‚Р°С‚РёСЃС‚РёРєР°:*\n"
-                    f"вЂў Р¤Р°Р№Р»РѕРІ: {len(files)}\n"
-                    f"вЂў РћР±С‰РёР№ СЂР°Р·РјРµСЂ: {total_size:.2f} MB\n\n"
-                    f"рџ“Ѓ Р’С‹Р±РµСЂРёС‚Рµ С„Р°Р№Р» РґР»СЏ РѕС‚РїСЂР°РІРєРё:")
+    message_text = (f"🎵 *Папка с музыкой*\n\n"
+                    f"📊 *Статистика:*\n"
+                    f"• Файлов: {len(files)}\n"
+                    f"• Общий размер: {total_size:.2f} MB\n\n"
+                    f"📁 Выберите файл для отправки:")
 
     keyboard = create_files_keyboard(files, page=0, folder_type="music")
     bot.reply_to(message, message_text, parse_mode='Markdown', reply_markup=keyboard)
@@ -3464,25 +3465,26 @@ def handle_music_folder(message):
 
 @bot.message_handler(func=lambda message: message.text == '🎙️ Подкасты')
 def handle_podcasts_folder(message):
-    """РџРѕРєР°Р·С‹РІР°РµС‚ СЃРїРёСЃРѕРє РїРѕРґРєР°СЃС‚РѕРІ"""
+    """Показывает список подкастов."""
     files = get_folder_files(PODCASTS_DIR)
 
     if not files:
         bot.reply_to(message,
-                     "рџЋ™пёЏ *РџР°РїРєР° СЃ РїРѕРґРєР°СЃС‚Р°РјРё*\n\n"
-                     "рџ“­ РџР°РїРєР° РїСѓСЃС‚Р°\n\n"
-                     "рџ’Ў *РЎРѕРІРµС‚:*\n"
-                     "вЂў РЎРєР°С‡Р°Р№С‚Рµ РґР»РёРЅРЅС‹Рµ РІРёРґРµРѕ СЃ YouTube\n"
-                     "вЂў РџРѕРґРєР°СЃС‚С‹ СЃРѕС…СЂР°РЅСЏСЋС‚СЃСЏ СЃСЋРґР° Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё\n"
-                     "вЂў Р¤Р°Р№Р»С‹ >20 РјРёРЅСѓС‚ СЃС‡РёС‚Р°СЋС‚СЃСЏ РїРѕРґРєР°СЃС‚Р°РјРё")
+                     "🎙️ *Папка с подкастами*\n\n"
+                     "📭 Папка пуста\n\n"
+                     "💡 *Совет:*\n"
+                     "• Скачайте длинные видео с YouTube\n"
+                     "• Подкасты сохраняются сюда автоматически\n"
+                     "• Файлы длиннее 20 минут считаются подкастами",
+                     parse_mode='Markdown')
         return
 
     total_size = sum(f['size'] for f in files)
-    message_text = (f"рџЋ™пёЏ *РџР°РїРєР° СЃ РїРѕРґРєР°СЃС‚Р°РјРё*\n\n"
-                    f"рџ“Љ *РЎС‚Р°С‚РёСЃС‚РёРєР°:*\n"
-                    f"вЂў Р¤Р°Р№Р»РѕРІ: {len(files)}\n"
-                    f"вЂў РћР±С‰РёР№ СЂР°Р·РјРµСЂ: {total_size:.2f} MB\n\n"
-                    f"рџ“Ѓ Р’С‹Р±РµСЂРёС‚Рµ С„Р°Р№Р» РґР»СЏ РѕС‚РїСЂР°РІРєРё:")
+    message_text = (f"🎙️ *Папка с подкастами*\n\n"
+                    f"📊 *Статистика:*\n"
+                    f"• Файлов: {len(files)}\n"
+                    f"• Общий размер: {total_size:.2f} MB\n\n"
+                    f"📁 Выберите файл для отправки:")
 
     keyboard = create_files_keyboard(files, page=0, folder_type="podcasts")
     bot.reply_to(message, message_text, parse_mode='Markdown', reply_markup=keyboard)
@@ -4554,7 +4556,7 @@ def handle_callback(call):
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("рџ¤– РўР•Р›Р•Р“Р РђРњ-РњРЈР—Р«РљРђР›Р¬РќР«Р™ Р‘РћРў Р—РђРџРЈР©Р•Рќ!")
+    print("🤖 ТЕЛЕГРАМ-МУЗЫКАЛЬНЫЙ БОТ ЗАПУЩЕН!")
     print("=" * 60)
     print(f"📁 Основная папка: {os.path.abspath(AUDIO_CACHE_DIR)}")
     print(f"🎵 Папка с музыкой: {os.path.abspath(MUSIC_DIR)}")
