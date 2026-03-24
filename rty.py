@@ -1348,7 +1348,7 @@ def run_liked_sync(chat_id, user_id, wait_message_id, library_chat_id=None):
         finish_liked_sync(user_id)
 
 
-def build_admin_contact_button(label="Contact Admin"):
+def build_admin_contact_button(label="Написать администратору"):
     if ADMIN_CONTACT_ID:
         return types.InlineKeyboardButton(label, url=f"tg://user?id={ADMIN_CONTACT_ID}")
     return None
@@ -1363,20 +1363,20 @@ def ensure_subscription_access(user_id, chat_id=None, reply_target=None, send_de
     if send_details:
         markup = types.InlineKeyboardMarkup()
         markup.add(
-            types.InlineKeyboardButton("Get Access", callback_data="buy_subscription"),
-            types.InlineKeyboardButton("Use Promo Code", callback_data="activate_promo")
+            types.InlineKeyboardButton("💰 Купить подписку", callback_data="buy_subscription"),
+            types.InlineKeyboardButton("🎁 Активировать промокод", callback_data="activate_promo")
         )
         contact_button = build_admin_contact_button()
         if contact_button:
             markup.add(contact_button)
 
         access_text = (
-            "*Access is limited*\n\n"
+            "🔒 *Доступ ограничен*\n\n"
             f"{message}\n\n"
-            "*How to get access:*\n"
-            "1. Activate a promo code\n"
-            "2. Buy a subscription\n"
-            "3. Contact admin if you need help"
+            "*Как получить доступ:*\n"
+            "1. Активируйте промокод\n"
+            "2. Купите подписку\n"
+            "3. Напишите администратору, если нужна помощь"
         )
 
         if reply_target is not None:
@@ -1385,6 +1385,236 @@ def ensure_subscription_access(user_id, chat_id=None, reply_target=None, send_de
             bot.send_message(chat_id, access_text, parse_mode='Markdown', reply_markup=markup)
 
     return has_access, message
+
+
+def build_subscription_main_view(user_id):
+    """Returns the main subscription screen text and keyboard."""
+    has_access, _ = database.check_subscription(user_id)
+    markup = types.InlineKeyboardMarkup(row_width=1)
+
+    if not has_access:
+        markup.add(
+            types.InlineKeyboardButton("💰 Купить подписку (49₽/месяц)", callback_data="buy_subscription"),
+            types.InlineKeyboardButton("🎁 Активировать промокод", callback_data="activate_promo"),
+        )
+        contact_button = build_admin_contact_button("📞 Связаться с администратором")
+        if contact_button:
+            markup.add(contact_button)
+
+        text = (
+            "🚫 *У вас нет активной подписки*\n\n"
+            "📅 *Сейчас недоступно:*\n"
+            "• Скачивание музыки\n"
+            "• Полный доступ ко всем источникам\n"
+            "• Приоритетная обработка запросов\n\n"
+            "💡 *Как открыть доступ:*\n"
+            "1. Купите подписку за 49₽/месяц\n"
+            "2. Активируйте промокод командой `/promo КОД`\n"
+            "3. При необходимости свяжитесь с администратором\n\n"
+            "✨ *После оформления подписки откроются все функции бота!*"
+        )
+        return text, markup
+
+    markup.add(types.InlineKeyboardButton("📊 Статистика", callback_data="stats"))
+
+    if user_id in ADMIN_IDS:
+        text = (
+            "✅ *АДМИНИСТРАТОРСКАЯ ПОДПИСКА*\n\n"
+            "⚡ *Вам доступны все функции бота!*\n\n"
+            "🚀 *Статус:* вечная администраторская подписка\n\n"
+            "✨ *Ваши возможности:*\n"
+            "• ✅ Скачивание музыки из YouTube\n"
+            "• ✅ Скачивание из Яндекс.Музыки\n"
+            "• ✅ Быстрая загрузка\n"
+            "• ✅ Автоматическая сортировка\n"
+            "• ⚙️ Административные права\n\n"
+            "Что вы хотите сделать?"
+        )
+    else:
+        text = (
+            "✅ *Подписка активна*\n\n"
+            "✨ *Ваши возможности:*\n"
+            "• ✅ Скачивание музыки из YouTube\n"
+            "• ✅ Скачивание из Яндекс.Музыки\n"
+            "• ✅ Быстрая загрузка\n"
+            "• ✅ Автоматическая сортировка\n\n"
+            "Что вы хотите сделать?"
+        )
+
+    return text, markup
+
+
+def build_subscription_buy_view():
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("🎁 Активировать промокод", callback_data="activate_promo"))
+    contact_button = build_admin_contact_button("📞 Связаться с администратором")
+    if contact_button:
+        markup.add(contact_button)
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_subscribe"))
+
+    text = (
+        "💳 *Оформление подписки*\n\n"
+        "📌 *Доступен один тариф:*\n"
+        "• PREMIUM — 49₽ в месяц\n\n"
+        "✨ *Что входит в подписку:*\n"
+        "• Скачивание из YouTube\n"
+        "• Скачивание из Яндекс.Музыки\n"
+        "• Быстрая загрузка\n"
+        "• Автоматическая сортировка\n\n"
+        "💡 *Варианты подключения:*\n"
+        "1. Активировать промокод\n"
+        "2. Написать администратору для оформления"
+    )
+    return text, markup
+
+
+def build_subscription_pricing_view():
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("🎁 Активировать промокод", callback_data="activate_promo"))
+    contact_button = build_admin_contact_button("📞 Связаться с администратором")
+    if contact_button:
+        markup.add(contact_button)
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_subscribe"))
+
+    text = (
+        "💰 *Тарифы подписки*\n\n"
+        "🔹 *PREMIUM — 49₽/месяц*\n"
+        "• Неограниченное скачивание музыки\n"
+        "• Доступ ко всем источникам\n"
+        "• Быстрая загрузка\n"
+        "• Приоритетная поддержка\n\n"
+        "🎁 Если у вас есть промокод, можно активировать его бесплатно."
+    )
+    return text, markup
+
+
+def build_activate_promo_view():
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_subscribe"))
+    text = (
+        "🎁 *Активация промокода*\n\n"
+        "Отправьте промокод в формате:\n"
+        "`/promo ВАШ_КОД`\n\n"
+        "💡 *Важно:*\n"
+        "• У одного пользователя может быть только один активированный промокод\n"
+        "• После активации промокод нельзя заменить другим\n"
+        "• Обычные промокоды дают доступ на ограниченный срок\n"
+        "• `V1_GAN13` — бессрочный промокод"
+    )
+    return text, markup
+
+
+def build_subscription_stats_view(user_id):
+    if user_id in ADMIN_IDS:
+        text = (
+            "⚡ *АДМИНИСТРАТОРСКАЯ СТАТИСТИКА*\n\n"
+            "📊 *Ваши привилегии:*\n"
+            "• Вечная полная подписка\n"
+            "• Административные права\n"
+            "• Доступ к общей статистике бота\n"
+            "• Управление промокодами\n\n"
+            "💎 *Статус:* администратор"
+        )
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("📈 Статистика бота", callback_data="admin_stats"))
+        markup.add(types.InlineKeyboardButton("🎫 Управление промокодами", callback_data="manage_promos"))
+        markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_subscribe"))
+        return text, markup
+
+    stats = database.get_user_stats(user_id) or {}
+    total_downloads = stats.get('total_downloads', 0)
+    today_downloads = stats.get('today_downloads', 0)
+    max_daily_downloads = stats.get('max_daily_downloads', 0)
+    active_days = stats.get('active_days', 0)
+    current_subscription = stats.get('current_subscription') or {}
+
+    sub_source = "подписка активна"
+    if current_subscription.get('promo_code') == 'V1_GAN13':
+        sub_source = "вечный промокод V1_GAN13"
+    elif current_subscription.get('promo_code'):
+        sub_source = f"промокод {current_subscription.get('promo_code')}"
+    elif current_subscription:
+        sub_source = "платная подписка"
+
+    text = (
+        "📊 *Ваша статистика*\n\n"
+        "📥 *Скачивания:*\n"
+        f"• Всего: {total_downloads}\n"
+        f"• Сегодня: {today_downloads}\n"
+        f"• Максимум за день: {max_daily_downloads}\n"
+        f"• Активных дней: {active_days}\n\n"
+        f"🔐 *Статус доступа:* {sub_source}"
+    )
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_subscribe"))
+    return text, markup
+
+
+def build_admin_stats_view():
+    active_users = database.get_active_users_count()
+    total_downloads = database.get_total_downloads()
+    all_promos = database.get_all_promo_codes()
+
+    active_promos = [promo for promo in all_promos if promo['is_active']]
+    used_promos = sum(promo['uses_count'] for promo in all_promos)
+
+    text = (
+        "📈 *Статистика бота*\n\n"
+        f"👥 Активные пользователи за 30 дней: *{active_users}*\n"
+        f"📥 Всего скачиваний: *{total_downloads}*\n"
+        f"🎁 Всего промокодов: *{len(all_promos)}*\n"
+        f"✅ Активных промокодов: *{len(active_promos)}*\n"
+        f"♻️ Использований промокодов: *{used_promos}*\n"
+        f"💾 Музыка в кэше: *{len(get_folder_files(MUSIC_DIR))}*\n"
+        f"🎙️ Подкасты в кэше: *{len(get_folder_files(PODCASTS_DIR))}*\n\n"
+        f"🕒 Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    )
+
+    if active_promos:
+        text += "\n\n🎫 *Активные промокоды:*\n"
+        for promo in active_promos[:10]:
+            expiry = promo['expiry_date'].split()[0] if promo['expiry_date'] else "бессрочно"
+            text += (
+                f"• `{promo['code']}` — {promo['subscription_type']} "
+                f"({promo['uses_count']}/{promo['max_uses']}), до {expiry}\n"
+            )
+        if len(active_promos) > 10:
+            text += f"• ... и еще {len(active_promos) - 10}\n"
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="stats"))
+    return text, markup
+
+
+def build_manage_promos_view():
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="stats"))
+    text = (
+        "🎫 *Управление промокодами*\n\n"
+        "Для создания промокода используйте команду:\n"
+        "`/admin_create_promo КОД premium 1 описание`\n\n"
+        "*Пример:*\n"
+        "`/admin_create_promo SPRING premium 5 Весенняя акция`\n\n"
+        "После этого новый промокод сразу появится в базе."
+    )
+    return text, markup
+
+
+def build_contact_admin_view():
+    markup = types.InlineKeyboardMarkup()
+    contact_button = build_admin_contact_button("✍️ Написать администратору")
+    if contact_button:
+        markup.add(contact_button)
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_subscribe"))
+    text = (
+        "📞 *Связь с администратором*\n\n"
+        "Используйте кнопку ниже, чтобы открыть диалог с администратором.\n\n"
+        "*Когда пишете, укажите:*\n"
+        "1. Ваш Telegram ID\n"
+        "2. Коротко суть вопроса\n"
+        "3. Что именно нужно: подписка, помощь или консультация"
+    )
+    return text, markup
 
 
 def build_main_menu_keyboard():
@@ -2540,16 +2770,8 @@ def handle_promo(message):
         # РџРѕР»СѓС‡Р°РµРј РїСЂРѕРјРѕРєРѕРґ РёР· РєРѕРјР°РЅРґС‹
         parts = message.text.split()
         if len(parts) < 2:
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("рџЋЃ РђРєС‚РёРІРёСЂРѕРІР°С‚СЊ РїСЂРѕРјРѕРєРѕРґ", callback_data="activate_promo"))
-
-            bot.reply_to(message,
-                         "рџЋЃ *РђРєС‚РёРІР°С†РёСЏ РїСЂРѕРјРѕРєРѕРґР°*\n\n"
-                         "Р”Р»СЏ Р°РєС‚РёРІР°С†РёРё РїСЂРѕРјРѕРєРѕРґР° РёСЃРїРѕР»СЊР·СѓР№С‚Рµ РєРѕРјР°РЅРґСѓ:\n"
-                         "`/promo Р’РђРЁ_РџР РћРњРћРљРћР”`\n\n"
-                         "РР»Рё РЅР°Р¶РјРёС‚Рµ РєРЅРѕРїРєСѓ РЅРёР¶Рµ РґР»СЏ РІРІРѕРґР° РїСЂРѕРјРѕРєРѕРґР°:",
-                         parse_mode='Markdown',
-                         reply_markup=markup)
+            promo_text, promo_markup = build_activate_promo_view()
+            bot.reply_to(message, promo_text, parse_mode='Markdown', reply_markup=promo_markup)
             return
 
         promo_code = parts[1].strip()
@@ -2557,20 +2779,20 @@ def handle_promo(message):
 
         # РџСЂРѕРІРµСЂСЏРµРј РґР»РёРЅСѓ РїСЂРѕРјРѕРєРѕРґР°
         if len(promo_code) < 3:
-            bot.reply_to(message, "вќЊ РџСЂРѕРјРѕРєРѕРґ СЃР»РёС€РєРѕРј РєРѕСЂРѕС‚РєРёР№. РњРёРЅРёРјР°Р»СЊРЅР°СЏ РґР»РёРЅР° - 3 СЃРёРјРІРѕР»Р°.")
+            bot.reply_to(message, "❌ Промокод слишком короткий. Минимальная длина — 3 символа.")
             return
 
         # РџСЂРѕРІРµСЂСЏРµРј, СЏРІР»СЏРµС‚СЃСЏ Р»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј
         if user_id in ADMIN_IDS:
             bot.reply_to(message,
-                         "вљЎ *Р’С‹ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ!*\n\n"
-                         "Р’Р°Рј Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РїСЂРµРґРѕСЃС‚Р°РІР»РµРЅР° Р±РµСЃРєРѕРЅРµС‡РЅР°СЏ РїРѕР»РЅР°СЏ РїРѕРґРїРёСЃРєР°.\n"
-                         "РџСЂРѕРјРѕРєРѕРґС‹ РІР°Рј РЅРµ РЅСѓР¶РЅС‹!",
+                         "⚡ *Вы администратор!*\n\n"
+                         "У вас уже есть бессрочный полный доступ.\n"
+                         "Промокоды вам не нужны.",
                          parse_mode='Markdown')
             return
 
         # РџРѕРєР°Р·С‹РІР°РµРј РѕР¶РёРґР°РЅРёРµ
-        wait_msg = bot.reply_to(message, f"рџ”Ќ РџСЂРѕРІРµСЂСЏСЋ РїСЂРѕРјРѕРєРѕРґ `{promo_code}`...", parse_mode='Markdown')
+        wait_msg = bot.reply_to(message, f"🔍 Проверяю промокод `{promo_code}`...", parse_mode='Markdown')
 
         # РђРєС‚РёРІРёСЂСѓРµРј РїСЂРѕРјРѕРєРѕРґ
         print(f"[DEBUG] Calling database.use_promo_code...")
@@ -2585,36 +2807,33 @@ def handle_promo(message):
 
         # РћС‚РїСЂР°РІР»СЏРµРј СЂРµР·СѓР»СЊС‚Р°С‚
         if result.get('success'):
-            # РџРѕР»СѓС‡Р°РµРј РѕР±РЅРѕРІР»РµРЅРЅСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РїРѕРґРїРёСЃРєРµ
-            has_access, msg = database.check_subscription(user_id)
-
             markup = types.InlineKeyboardMarkup()
             markup.add(
-                types.InlineKeyboardButton("рџ“Љ РњРѕСЏ РїРѕРґРїРёСЃРєР°", callback_data="back_to_subscribe"),
-                types.InlineKeyboardButton("рџЋµ РЎРєР°С‡Р°С‚СЊ РјСѓР·С‹РєСѓ", callback_data="new_search")
+                types.InlineKeyboardButton("📊 Моя подписка", callback_data="back_to_subscribe"),
+                types.InlineKeyboardButton("🎵 Скачать музыку", callback_data="new_search")
             )
 
             bot.reply_to(message,
-                         f"рџЋ‰ *РЈСЃРїРµС€РЅРѕ!*\n\n"
+                         f"🎉 *Успешно!*\n\n"
                          f"{result['message']}\n\n"
-                         f"рџљЂ *РќР°С‡РЅРёС‚Рµ РїСЂСЏРјРѕ СЃРµР№С‡Р°СЃ:*\n"
-                         f"1. РћС‚РїСЂР°РІСЊС‚Рµ РЅР°Р·РІР°РЅРёРµ РїРµСЃРЅРё РІ С‡Р°С‚\n"
-                         f"2. РСЃРїРѕР»СЊР·СѓР№С‚Рµ РїРѕРёСЃРє С‡РµСЂРµР· РєРЅРѕРїРєРё\n"
-                         f"3. РћС‚РїСЂР°РІСЊС‚Рµ СЃСЃС‹Р»РєСѓ РЅР° С‚СЂРµРє",
+                         f"🚀 *Можно начинать прямо сейчас:*\n"
+                         f"1. Отправьте название песни в чат\n"
+                         f"2. Используйте поиск через кнопки\n"
+                         f"3. Отправьте ссылку на трек",
                          parse_mode='Markdown',
                          reply_markup=markup)
         else:
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("рџ”„ РџРѕРїСЂРѕР±РѕРІР°С‚СЊ РґСЂСѓРіРѕР№ РєРѕРґ", callback_data="activate_promo"))
+            markup.add(types.InlineKeyboardButton("🔁 Попробовать другой код", callback_data="activate_promo"))
 
             bot.reply_to(message,
-                         f"вќЊ *РќРµ СѓРґР°Р»РѕСЃСЊ Р°РєС‚РёРІРёСЂРѕРІР°С‚СЊ РїСЂРѕРјРѕРєРѕРґ*\n\n"
-                         f"*РљРѕРґ:* `{promo_code}`\n"
-                         f"*РџСЂРёС‡РёРЅР°:* {result.get('message', 'РќРµРёР·РІРµСЃС‚РЅР°СЏ РѕС€РёР±РєР°')}\n\n"
-                         f"рџ’Ў *РЎРѕРІРµС‚С‹:*\n"
-                         f"вЂў РџСЂРѕРІРµСЂСЊС‚Рµ РїСЂР°РІРёР»СЊРЅРѕСЃС‚СЊ РЅР°РїРёСЃР°РЅРёСЏ\n"
-                         f"вЂў РЈР±РµРґРёС‚РµСЃСЊ, С‡С‚Рѕ РїСЂРѕРјРѕРєРѕРґ РµС‰Рµ РґРµР№СЃС‚РІРёС‚РµР»РµРЅ\n"
-                         f"вЂў РџРѕРјРЅРёС‚Рµ: РѕРґРёРЅ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ = РѕРґРёРЅ РїСЂРѕРјРѕРєРѕРґ",
+                         f"❌ *Не удалось активировать промокод*\n\n"
+                         f"*Код:* `{promo_code}`\n"
+                         f"*Причина:* {result.get('message', 'Неизвестная ошибка')}\n\n"
+                         f"💡 *Проверьте:*\n"
+                         f"• правильность написания\n"
+                         f"• срок действия промокода\n"
+                         f"• не активировали ли вы другой код раньше",
                          parse_mode='Markdown',
                          reply_markup=markup)
 
@@ -2622,7 +2841,7 @@ def handle_promo(message):
         print(f"[ERROR] РћС€РёР±РєР° РѕР±СЂР°Р±РѕС‚РєРё РїСЂРѕРјРѕРєРѕРґР°: {e}")
         traceback.print_exc()
         bot.reply_to(message,
-                     "вќЊ РџСЂРѕРёР·РѕС€Р»Р° РѕС€РёР±РєР° РїСЂРё РѕР±СЂР°Р±РѕС‚РєРµ РїСЂРѕРјРѕРєРѕРґР°. РџРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.")
+                     "❌ Произошла ошибка при обработке промокода. Попробуйте позже.")
 
 
 # РћР±РЅРѕРІР»РµРЅРЅР°СЏ С„СѓРЅРєС†РёСЏ handle_subscribe (СѓР±СЂР°С‚СЊ РєРЅРѕРїРєРё РїСЂРѕРјРѕРєРѕРґРѕРІ)
@@ -2631,54 +2850,8 @@ def handle_subscribe(message):
     """Обработчик команды подписки."""
     try:
         user_id = message.from_user.id
-
-        has_access, msg = database.check_subscription(user_id)
-        markup = types.InlineKeyboardMarkup(row_width=1)
-
-        if not has_access:
-            markup.add(
-                types.InlineKeyboardButton("💰 Купить подписку (49₽/месяц)", callback_data="buy_subscription"),
-                types.InlineKeyboardButton("📞 Связаться с администратором", callback_data="contact_admin")
-            )
-
-            reply_text = (
-                "🚫 *У вас нет активной подписки*\n\n"
-                "📅 *Доступ ограничен:*\n"
-                "• ❌ Скачивание музыки недоступно\n"
-                "• ❌ Поиск работает с ограничениями\n\n"
-                "💡 *Как получить доступ:*\n"
-                "1. 💰 Купите подписку за 49₽/месяц\n"
-                "2. 📞 Свяжитесь с администратором\n"
-                "3. 🎁 Если у вас есть промокод, используйте `/promo КОД`\n\n"
-                "✨ *После оформления подписки откроются все функции бота!*"
-            )
-
-            bot.reply_to(message, reply_text, parse_mode='Markdown', reply_markup=markup)
-        else:
-            markup.add(
-                types.InlineKeyboardButton("📊 Статистика", callback_data="stats"),
-            )
-
-            if user_id in ADMIN_IDS:
-                subscription_info = (
-                    "✅ *АДМИНИСТРАТОРСКАЯ ПОДПИСКА*\n\n"
-                    "⚡ *Вам доступны все функции бота!*\n\n"
-                    "🚀 *Статус:* ВЕЧНАЯ АДМИНИСТРАТОРСКАЯ подписка\n"
-                )
-            else:
-                subscription_info = "✅ *Подписка активна*\n\n"
-
-            reply_text = f"{subscription_info}\n"
-            reply_text += (
-                "✨ *Ваши возможности:*\n"
-                "• ✅ Скачивание музыки из YouTube\n"
-                "• ✅ Скачивание из Яндекс.Музыки\n"
-                "• ✅ Быстрая загрузка\n"
-                "• ✅ Автоматическая сортировка\n\n"
-                "Что вы хотите сделать?"
-            )
-
-            bot.reply_to(message, reply_text, parse_mode='Markdown', reply_markup=markup)
+        reply_text, markup = build_subscription_main_view(user_id)
+        bot.reply_to(message, reply_text, parse_mode='Markdown', reply_markup=markup)
 
     except Exception as e:
         print(f"[ERROR] Ошибка в обработчике подписки: {e}")
@@ -2901,50 +3074,15 @@ def handle_admin_stats(message):
     try:
         user_id = message.from_user.id
         if user_id not in ADMIN_IDS:
-            bot.reply_to(message, "вќЊ РЈ РІР°СЃ РЅРµС‚ РїСЂР°РІ РґР»СЏ РІС‹РїРѕР»РЅРµРЅРёСЏ СЌС‚РѕР№ РєРѕРјР°РЅРґС‹.")
+            bot.reply_to(message, "❌ У вас нет прав для выполнения этой команды.")
             return
-
-        # РџРѕР»СѓС‡Р°РµРј СЃС‚Р°С‚РёСЃС‚РёРєСѓ
-        active_users = database.get_active_users_count()
-        total_downloads = database.get_total_downloads()
-        all_promos = database.get_all_promo_codes()
-
-        # РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РїСЂРѕРјРѕРєРѕРґР°Рј
-        active_promos = [p for p in all_promos if p['is_active']]
-        used_promos = sum(p['uses_count'] for p in all_promos)
-        total_promos_created = len(all_promos)
-
-        stats_text = (
-            "рџ“Љ *РЎС‚Р°С‚РёСЃС‚РёРєР° Р±РѕС‚Р°*\n\n"
-            f"рџ‘Ґ *РџРѕР»СЊР·РѕРІР°С‚РµР»Рё:*\n"
-            f"вЂў РђРєС‚РёРІРЅС‹Рµ (30 РґРЅРµР№): {active_users}\n\n"
-            f"рџ“Ґ *РЎРєР°С‡РёРІР°РЅРёСЏ:*\n"
-            f"вЂў Р’СЃРµРіРѕ: {total_downloads}\n\n"
-            f"рџЋЃ *РџСЂРѕРјРѕРєРѕРґС‹:*\n"
-            f"вЂў Р’СЃРµРіРѕ СЃРѕР·РґР°РЅРѕ: {total_promos_created}\n"
-            f"вЂў РђРєС‚РёРІРЅС‹С…: {len(active_promos)}\n"
-            f"вЂў РСЃРїРѕР»СЊР·РѕРІР°РЅРѕ СЂР°Р·: {used_promos}\n\n"
-            f"рџ’ѕ *РљСЌС€:*\n"
-            f"вЂў РњСѓР·С‹РєР°: {len(get_folder_files(MUSIC_DIR))} С„Р°Р№Р»РѕРІ\n"
-            f"вЂў РџРѕРґРєР°СЃС‚С‹: {len(get_folder_files(PODCASTS_DIR))} С„Р°Р№Р»РѕРІ\n\n"
-            f"вЏ° *Р’СЂРµРјСЏ СЂР°Р±РѕС‚С‹:* {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-        )
-
-        # Р”РѕР±Р°РІР»СЏРµРј СЃРїРёСЃРѕРє Р°РєС‚РёРІРЅС‹С… РїСЂРѕРјРѕРєРѕРґРѕРІ
-        if active_promos:
-            stats_text += "\n\nрџЋ« *РђРєС‚РёРІРЅС‹Рµ РїСЂРѕРјРѕРєРѕРґС‹:*\n"
-            for promo in active_promos[:10]:  # РџРѕРєР°Р·С‹РІР°РµРј РїРµСЂРІС‹Рµ 10
-                expiry = promo['expiry_date'].split()[0] if promo['expiry_date'] else "Р±РµСЃСЃСЂРѕС‡РЅРѕ"
-                stats_text += f"вЂў `{promo['code']}` - {promo['subscription_type']} ({promo['uses_count']}/{promo['max_uses']}) РґРѕ {expiry}\n"
-            if len(active_promos) > 10:
-                stats_text += f"вЂў ... Рё РµС‰Рµ {len(active_promos) - 10}"
-
+        stats_text, _ = build_admin_stats_view()
         bot.reply_to(message, stats_text, parse_mode='Markdown')
 
     except Exception as e:
         print(f"[ERROR] РћС€РёР±РєР° СЃС‚Р°С‚РёСЃС‚РёРєРё: {e}")
         traceback.print_exc()
-        bot.reply_to(message, f"вќЊ РћС€РёР±РєР°: {str(e)}")
+        bot.reply_to(message, f"❌ Ошибка: {str(e)}")
 
 
 # ============================================
@@ -3568,7 +3706,7 @@ def handle_menu_buttons_fallback(message):
         return handle_subscribe_button(message)
     if 'Текст песни' in normalized_text:
         return handle_lyrics_button(message)
-    if 'РџРѕРјРѕС‰СЊ' in normalized_text:
+    if 'Помощь' in normalized_text:
         return handle_help_button(message)
 
 
@@ -3784,85 +3922,30 @@ def handle_callback(call):
         # РћР±СЂР°Р±РѕС‚РєР° РїРѕРґРїРёСЃРєРё
         elif data == "activate_promo":
             try:
-                markup = types.InlineKeyboardMarkup()
-                markup.add(types.InlineKeyboardButton("рџ”™ РќР°Р·Р°Рґ", callback_data="back_to_subscribe"))
-
-                safe_edit_message_text(
-                    "рџЋЃ *РђРєС‚РёРІР°С†РёСЏ РїСЂРѕРјРѕРєРѕРґР°*\n\n"
-                    "РћС‚РїСЂР°РІСЊС‚Рµ РїСЂРѕРјРѕРєРѕРґ РІ С„РѕСЂРјР°С‚Рµ:\n"
-                    "`/promo Р’РђРЁ_РљРћР”`\n\n"
-                    "рџ’Ў *Р’Р°Р¶РЅРѕ:*\n"
-                    "вЂў РљР°Р¶РґС‹Р№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РјРѕР¶РµС‚ Р°РєС‚РёРІРёСЂРѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ РѕРґРёРЅ РїСЂРѕРјРѕРєРѕРґ\n"
-                    "вЂў РџРѕСЃР»Рµ Р°РєС‚РёРІР°С†РёРё РїСЂРѕРјРѕРєРѕРґ РЅРµР»СЊР·СЏ РёР·РјРµРЅРёС‚СЊ\n"
-                    "вЂў РџСЂРѕРјРѕРєРѕРґС‹ РґР°СЋС‚ РґРѕСЃС‚СѓРї РЅР° 30 РґРЅРµР№\n"
-                    "вЂў РСЃРєР»СЋС‡РµРЅРёРµ: V1_GAN13 - РІРµС‡РЅР°СЏ РїРѕРґРїРёСЃРєР°",
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    parse_mode='Markdown',
-                    reply_markup=markup
-                )
+                text, markup = build_activate_promo_view()
+                safe_edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode='Markdown', reply_markup=markup)
                 print(f"[DEBUG] Successfully showed activate_promo menu for user {call.from_user.id}")
             except Exception as e:
                 print(f"[ERROR] Failed to show activate_promo menu: {e}")
                 try:
-                    bot.send_message(
-                        chat_id,
-                        "рџЋЃ *РђРєС‚РёРІР°С†РёСЏ РїСЂРѕРјРѕРєРѕРґР°*\n\n"
-                        "РћС‚РїСЂР°РІСЊС‚Рµ РїСЂРѕРјРѕРєРѕРґ РєРѕРјР°РЅРґРѕР№:\n"
-                        "`/promo Р’РђРЁ_РљРћР”`",
-                        parse_mode='Markdown'
-                    )
+                    text, _ = build_activate_promo_view()
+                    bot.send_message(chat_id, text, parse_mode='Markdown')
                 except Exception as e2:
                     print(f"[ERROR] Failed to send message as fallback: {e2}")
             return
 
         elif data == "buy_subscription":
             try:
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                markup.add(types.InlineKeyboardButton("Use Promo Code", callback_data="activate_promo"))
-                contact_button = build_admin_contact_button("Contact Admin")
-                if contact_button:
-                    markup.add(contact_button)
-                safe_edit_message_text(
-                    "рџ’і *РћС„РѕСЂРјР»РµРЅРёРµ РїРѕРґРїРёСЃРєРё*\n\n"
-                    "рџ“‹ *Р’С‹Р±РµСЂРёС‚Рµ СЃРїРѕСЃРѕР±:*\n\n"
-                    "1. рџЋЃ *РџСЂРѕРјРѕРєРѕРґ* - Р±РµСЃРїР»Р°С‚РЅРѕ Рё РЅР°РІСЃРµРіРґР°\n"
-                    "2. рџ’° *РџР»Р°С‚РЅР°СЏ РїРѕРґРїРёСЃРєР°* - 49в‚Ѕ/РјРµСЃСЏС† С‡РµСЂРµР· Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°\n"
-                    "3. рџ“ћ *РЎРІСЏР·СЊ* - РґР»СЏ РєРѕРЅСЃСѓР»СЊС‚Р°С†РёРё\n\n"
-                    "рџ’Ў *Р РµРєРѕРјРµРЅРґСѓРµРј СЃРЅР°С‡Р°Р»Р° РїРѕРїСЂРѕР±РѕРІР°С‚СЊ РїСЂРѕРјРѕРєРѕРґС‹!*",
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    parse_mode='Markdown',
-                    reply_markup=markup
-                )
+                text, markup = build_subscription_buy_view()
+                safe_edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode='Markdown', reply_markup=markup)
             except Exception as e:
                 print(f"[ERROR] Failed to show buy_subscription: {e}")
             return
 
         elif data == "pricing":
             try:
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                markup.add(types.InlineKeyboardButton("Use Promo Code", callback_data="activate_promo"))
-                contact_button = build_admin_contact_button("Contact Admin")
-                if contact_button:
-                    markup.add(contact_button)
-                safe_edit_message_text(
-                    "рџ’° *РўР°СЂРёС„С‹ РїРѕРґРїРёСЃРєРё*\n\n"
-                    "рџ”№ *PREMIUM РїРѕРґРїРёСЃРєР°* (49в‚Ѕ/РјРµСЃСЏС†):\n"
-                    "вЂў РќРµРѕРіСЂР°РЅРёС‡РµРЅРЅРѕРµ СЃРєР°С‡РёРІР°РЅРёРµ РјСѓР·С‹РєРё\n"
-                    "вЂў Р”РѕСЃС‚СѓРї РєРѕ РІСЃРµРј РёСЃС‚РѕС‡РЅРёРєР°Рј (YouTube, РЇРЅРґРµРєСЃ.РњСѓР·С‹РєР°)\n"
-                    "вЂў РџРѕРґРґРµСЂР¶РєР° 24/7\n"
-                    "вЂў Р‘С‹СЃС‚СЂР°СЏ Р·Р°РіСЂСѓР·РєР°\n\n"
-                    "рџ’¬ *Р”Р»СЏ РѕС„РѕСЂРјР»РµРЅРёСЏ РїРѕРґРїРёСЃРєРё:*\n"
-                    "1. РЎРІСЏР¶РёС‚РµСЃСЊ СЃ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј\n"
-                    "2. РЈРєР°Р¶РёС‚Рµ Р¶РµР»Р°РµРјС‹Р№ СЃСЂРѕРє РїРѕРґРїРёСЃРєРё\n"
-                    "3. РџРѕСЃР»Рµ РѕРїР»Р°С‚Р° РІС‹ РїРѕР»СѓС‡РёС‚Рµ РґРѕСЃС‚СѓРї\n\n"
-                    "рџЋЃ *РР»Рё Р°РєС‚РёРІРёСЂСѓР№С‚Рµ РїСЂРѕРјРѕРєРѕРґ РґР»СЏ Р±РµСЃРїР»Р°С‚РЅРѕРіРѕ РґРѕСЃС‚СѓРїР°!*",
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    parse_mode='Markdown',
-                    reply_markup=markup
-                )
+                text, markup = build_subscription_pricing_view()
+                safe_edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode='Markdown', reply_markup=markup)
             except Exception as e:
                 print(f"[ERROR] Failed to show pricing: {e}")
             return
@@ -3870,61 +3953,7 @@ def handle_callback(call):
         elif data == "stats":
             try:
                 user_id = call.from_user.id
-
-                # РџСЂРѕРІРµСЂСЏРµРј, СЏРІР»СЏРµС‚СЃСЏ Р»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј
-                if user_id in ADMIN_IDS:
-                    stats_text = (
-                        "вљЎ *РђР”РњРРќРРЎРўР РђРўРћР РЎРљРђРЇ РЎРўРђРўРРЎРўРРљРђ*\n\n"
-                        "рџ“Љ *Р’Р°С€Рё РїСЂРёРІРёР»РµРіРёРё:*\n"
-                        "вЂў в™ѕпёЏ Р’РµС‡РЅР°СЏ РїРѕР»РЅР°СЏ РїРѕРґРїРёСЃРєР°\n"
-                        "вЂў вљ™пёЏ РђРґРјРёРЅРёСЃС‚СЂР°С‚РёРІРЅС‹Рµ РїСЂР°РІР°\n"
-                        "вЂў рџ“€ Р”РѕСЃС‚СѓРї РєРѕ РІСЃРµР№ СЃС‚Р°С‚РёСЃС‚РёРєРµ\n"
-                        "вЂў рџ”§ РЈРїСЂР°РІР»РµРЅРёРµ РїСЂРѕРјРѕРєРѕРґР°РјРё\n\n"
-                        "рџ’Ћ *РЎС‚Р°С‚СѓСЃ:* РђР”РњРРќРРЎРўР РђРўРћР  (Р’Р•Р§РќРђРЇ РїРѕРґРїРёСЃРєР°)"
-                    )
-
-                    markup = types.InlineKeyboardMarkup()
-                    markup.add(
-                        types.InlineKeyboardButton("рџ“€ РЎС‚Р°С‚РёСЃС‚РёРєР° Р±РѕС‚Р°", callback_data="admin_stats"),
-                        types.InlineKeyboardButton("рџЋ« РЈРїСЂР°РІР»РµРЅРёРµ РїСЂРѕРјРѕРєРѕРґР°РјРё", callback_data="manage_promos"),
-                        types.InlineKeyboardButton("рџ”™ РќР°Р·Р°Рґ", callback_data="back_to_subscribe")
-                    )
-                else:
-                    stats = database.get_user_stats(user_id)
-
-                    stats_text = "рџ“Љ *Р’Р°С€Р° СЃС‚Р°С‚РёСЃС‚РёРєР°*\n\n"
-
-                    if stats:
-                        stats_text += (
-                            f"рџ“Ґ *РЎРєР°С‡РёРІР°РЅРёСЏ:*\n"
-                            f"вЂў Р’СЃРµРіРѕ: {stats.get('total_downloads', 0)}\n"
-                            f"вЂў РЎРµРіРѕРґРЅСЏ: {stats.get('today_downloads', 0)}\n"
-                            f"вЂў РњР°РєСЃРёРјСѓРј Р·Р° РґРµРЅСЊ: {stats.get('max_daily_downloads', 0)}\n"
-                            f"вЂў РђРєС‚РёРІРЅС‹С… РґРЅРµР№: {stats.get('active_days', 0)}\n\n"
-                        )
-
-                        if 'current_subscription' in stats:
-                            sub = stats['current_subscription']
-                            sub_type = sub.get('type', 'premium').upper()
-
-                            if sub.get('promo_code') == 'V1_GAN13':
-                                source = "рџЋЃ Р’Р•Р§РќР«Р™ РїСЂРѕРјРѕРєРѕРґ: V1_GAN13"
-                            elif sub.get('is_promo'):
-                                source = f"рџЋЃ РџСЂРѕРјРѕРєРѕРґ: {sub.get('promo_code', '')}"
-                            else:
-                                source = "рџ’і РћРїР»Р°С‚Р°"
-
-                            stats_text += f"рџ’Ћ *РџРѕРґРїРёСЃРєР°:* {sub_type} ({source})\n\n"
-                    else:
-                        stats_text += "рџ“­ *РЎС‚Р°С‚РёСЃС‚РёРєР° РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚*\n\n"
-
-                    # Р”РѕР±Р°РІР»СЏРµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РїРѕРґРїРёСЃРєРµ
-                    has_access, msg = database.check_subscription(user_id)
-                    stats_text += f"рџ”ђ *РЎС‚Р°С‚СѓСЃ РґРѕСЃС‚СѓРїР°:*\n{msg}"
-
-                    markup = types.InlineKeyboardMarkup()
-                    markup.add(types.InlineKeyboardButton("рџ”™ РќР°Р·Р°Рґ", callback_data="back_to_subscribe"))
-
+                stats_text, markup = build_subscription_stats_view(user_id)
                 safe_edit_message_text(
                     stats_text,
                     chat_id=chat_id,
@@ -3941,47 +3970,9 @@ def handle_callback(call):
             try:
                 user_id = call.from_user.id
                 if user_id not in ADMIN_IDS:
-                    bot.answer_callback_query(call.id, "вќЊ РЈ РІР°СЃ РЅРµС‚ РїСЂР°РІ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°")
+                    bot.answer_callback_query(call.id, "❌ У вас нет прав администратора")
                     return
-
-                # РџРѕР»СѓС‡Р°РµРј СЃС‚Р°С‚РёСЃС‚РёРєСѓ
-                active_users = database.get_active_users_count()
-                total_downloads = database.get_total_downloads()
-                all_promos = database.get_all_promo_codes()
-
-                # РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РїСЂРѕРјРѕРєРѕРґР°Рј
-                active_promos = [p for p in all_promos if p['is_active']]
-                used_promos = sum(p['uses_count'] for p in all_promos)
-                total_promos_created = len(all_promos)
-
-                stats_text = (
-                    "рџ“Љ *РЎС‚Р°С‚РёСЃС‚РёРєР° Р±РѕС‚Р° (РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ)*\n\n"
-                    f"рџ‘Ґ *РџРѕР»СЊР·РѕРІР°С‚РµР»Рё:*\n"
-                    f"вЂў РђРєС‚РёРІРЅС‹Рµ (30 РґРЅРµР№): {active_users}\n\n"
-                    f"рџ“Ґ *РЎРєР°С‡РёРІР°РЅРёСЏ:*\n"
-                    f"вЂў Р’СЃРµРіРѕ: {total_downloads}\n\n"
-                    f"рџЋЃ *РџСЂРѕРјРѕРєРѕРґС‹:*\n"
-                    f"вЂў Р’СЃРµРіРѕ СЃРѕР·РґР°РЅРѕ: {total_promos_created}\n"
-                    f"вЂў РђРєС‚РёРІРЅС‹С…: {len(active_promos)}\n"
-                    f"вЂў РСЃРїРѕР»СЊР·РѕРІР°РЅРѕ СЂР°Р·: {used_promos}\n\n"
-                    f"рџ’ѕ *РљСЌС€:*\n"
-                    f"вЂў РњСѓР·С‹РєР°: {len(get_folder_files(MUSIC_DIR))} С„Р°Р№Р»РѕРІ\n"
-                    f"вЂў РџРѕРґРєР°СЃС‚С‹: {len(get_folder_files(PODCASTS_DIR))} С„Р°Р№Р»РѕРІ\n\n"
-                    f"вЏ° *Р’СЂРµРјСЏ СЂР°Р±РѕС‚С‹:* {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-                )
-
-                # Р”РѕР±Р°РІР»СЏРµРј СЃРїРёСЃРѕРє Р°РєС‚РёРІРЅС‹С… РїСЂРѕРјРѕРєРѕРґРѕРІ
-                if active_promos:
-                    stats_text += "\n\nрџЋ« *РђРєС‚РёРІРЅС‹Рµ РїСЂРѕРјРѕРєРѕРґС‹:*\n"
-                    for promo in active_promos[:10]:
-                        expiry = promo['expiry_date'].split()[0] if promo['expiry_date'] else "Р±РµСЃСЃСЂРѕС‡РЅРѕ (V1_GAN13)"
-                        stats_text += f"вЂў `{promo['code']}` - {promo['subscription_type']} ({promo['uses_count']}/{promo['max_uses']}) РґРѕ {expiry}\n"
-                    if len(active_promos) > 10:
-                        stats_text += f"вЂў ... Рё РµС‰Рµ {len(active_promos) - 10}"
-
-                markup = types.InlineKeyboardMarkup()
-                markup.add(types.InlineKeyboardButton("рџ”™ РќР°Р·Р°Рґ", callback_data="stats"))
-
+                stats_text, markup = build_admin_stats_view()
                 safe_edit_message_text(
                     stats_text,
                     chat_id=chat_id,
@@ -3994,27 +3985,23 @@ def handle_callback(call):
                 bot.answer_callback_query(call.id, "вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё СЃС‚Р°С‚РёСЃС‚РёРєРё")
             return
 
+        elif data == "manage_promos":
+            try:
+                user_id = call.from_user.id
+                if user_id not in ADMIN_IDS:
+                    bot.answer_callback_query(call.id, "❌ У вас нет прав администратора")
+                    return
+                text, markup = build_manage_promos_view()
+                safe_edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode='Markdown', reply_markup=markup)
+            except Exception as e:
+                print(f"[ERROR] Failed to show manage_promos: {e}")
+                bot.answer_callback_query(call.id, "❌ Не удалось открыть управление промокодами")
+            return
+
         elif data == "contact_admin":
             try:
-                markup = types.InlineKeyboardMarkup()
-                markup.add(types.InlineKeyboardButton("Back", callback_data="back_to_subscribe"))
-                contact_button = build_admin_contact_button("Write to Admin")
-                if contact_button:
-                    markup.add(contact_button)
-
-                safe_edit_message_text(
-                    "*Contact admin*\n\n"
-                    "Use the button below to open a dialog with the admin.\n\n"
-                    "*When contacting us, include:*\n"
-                    "1. Your Telegram ID\n"
-                    "2. Reason for contact\n"
-                    "3. Short description of the issue or request\n\n"
-                    "*Response time:* usually within 24 hours",
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    parse_mode='Markdown',
-                    reply_markup=markup
-                )
+                text, markup = build_contact_admin_view()
+                safe_edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode='Markdown', reply_markup=markup)
             except Exception as e:
                 print(f"[ERROR] Failed to show contact_admin: {e}")
             return
@@ -4023,36 +4010,7 @@ def handle_callback(call):
             # Р’РѕР·РІСЂР°С‰Р°РµРјСЃСЏ Рє РјРµРЅСЋ РїРѕРґРїРёСЃРєРё
             try:
                 user_id = call.from_user.id
-                has_access, msg = database.check_subscription(user_id)
-
-                markup = types.InlineKeyboardMarkup(row_width=1)
-
-                if not has_access:
-                    markup.add(
-                        types.InlineKeyboardButton("рџ’° РљСѓРїРёС‚СЊ РїРѕРґРїРёСЃРєСѓ (49в‚Ѕ/РјРµСЃСЏС†)", callback_data="buy_subscription"),
-                        types.InlineKeyboardButton("рџ“ћ РЎРІСЏР·Р°С‚СЊСЃСЏ СЃ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј", callback_data="contact_admin")
-                    )
-                    reply_text = (f"рџљ« *РЈ РІР°СЃ РЅРµС‚ Р°РєС‚РёРІРЅРѕР№ РїРѕРґРїРёСЃРєРё*\n\n"
-                                  f"{msg}\n\n"
-                                  f"рџ’Ў *РљР°Рє РїРѕР»СѓС‡РёС‚СЊ РґРѕСЃС‚СѓРї:*\n"
-                                  f"1. рџ’° РљСѓРїРёС‚Рµ РїРѕРґРїРёСЃРєСѓ (РІСЃРµРіРѕ 49в‚Ѕ/РјРµСЃСЏС†)\n"
-                                  f"2. рџ“ћ РЎРІСЏР¶РёС‚РµСЃСЊ СЃ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј\n"
-                                  f"3. рџЋЃ Р•СЃР»Рё РµСЃС‚СЊ РїСЂРѕРјРѕРєРѕРґ - РёСЃРїРѕР»СЊР·СѓР№С‚Рµ /promo РљРћР”\n\n"
-                                  f"вњЁ *РћС„РѕСЂРјРёС‚Рµ РїРѕРґРїРёСЃРєСѓ Рё РїРѕР»СѓС‡РёС‚Рµ РґРѕСЃС‚СѓРї РєРѕ РІСЃРµРј С„СѓРЅРєС†РёСЏРј!*")
-                else:
-                    markup.add(
-                        types.InlineKeyboardButton("рџ“Љ РЎС‚Р°С‚РёСЃС‚РёРєР°", callback_data="stats"),
-                    )
-                    reply_text = f"вњ… *РРЅС„РѕСЂРјР°С†РёСЏ Рѕ РїРѕРґРїРёСЃРєРµ*\n\n{msg}\n\n"
-                    reply_text += (
-                        "вњЁ *Р’Р°С€Рё РІРѕР·РјРѕР¶РЅРѕСЃС‚Рё:*\n"
-                        "вЂў вњ… РЎРєР°С‡РёРІР°РЅРёРµ РјСѓР·С‹РєРё РёР· YouTube\n"
-                        "вЂў вњ… РЎРєР°С‡РёРІР°РЅРёРµ РёР· РЇРЅРґРµРєСЃ.РњСѓР·С‹РєРё\n"
-                        "вЂў вњ… Р‘С‹СЃС‚СЂР°СЏ Р·Р°РіСЂСѓР·РєР°\n"
-                        "вЂў вњ… РђРІС‚РѕРјР°С‚РёС‡РµСЃРєР°СЏ СЃРѕСЂС‚РёСЂРѕРІРєР°\n\n"
-                        "Р§С‚Рѕ РІС‹ С…РѕС‚РёС‚Рµ СЃРґРµР»Р°С‚СЊ?"
-                    )
-
+                reply_text, markup = build_subscription_main_view(user_id)
                 safe_edit_message_text(
                     reply_text,
                     chat_id=chat_id,

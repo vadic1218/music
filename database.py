@@ -201,7 +201,6 @@ class Database:
         """Проверяет активность подписки пользователя"""
         try:
             with self.lock:
-                # Проверяем, является ли пользователь администратором
                 if user_id in ADMIN_IDS:
                     return True, self._get_admin_subscription_message()
 
@@ -228,7 +227,6 @@ class Database:
 
                 result = cursor.fetchone()
 
-                # Если нет подписки
                 if not result:
                     conn.close()
                     return False, "🚫 *У вас нет активной подписки*\n\nИспользуйте /subscribe для оформления доступа"
@@ -240,14 +238,12 @@ class Database:
                 promo_code = result['promo_code']
                 today_downloads = result['today_downloads'] or 0
 
-                # Проверяем дневной лимит
                 limit = SUBSCRIPTION_LIMITS.get(sub_type, 999999)
 
                 if limit and today_downloads >= limit:
                     conn.close()
                     return False, f"❌ Достигнут дневной лимит ({limit} скачиваний)"
 
-                # Форматируем сообщение
                 if is_promo:
                     if promo_code == 'V1_GAN13':
                         source = "🎁 *ВЕЧНЫЙ промокод: V1_GAN13*"
@@ -276,17 +272,17 @@ class Database:
                     else:
                         expiry_text = f"⏱ *Срок:* НЕОГРАНИЧЕНО\n"
 
-                message = f"✅ *PREMIUM подписка активна!*\n\n"
-                message += f"📅 *Источник:* {source}\n"
-                message += expiry_text
-                message += f"📊 *Использовано сегодня:* {today_downloads}\n\n"
-
-                # Добавляем информацию о возможностях
-                message += "✨ *Ваши возможности:*\n"
-                message += "• ✅ Неограниченное скачивание\n"
-                message += "• ✅ Все источники (YouTube, Яндекс.Музыка)\n"
-                message += "• ✅ Приоритетная поддержка\n"
-                message += "• ✅ Быстрая загрузка\n"
+                message = (
+                    "✅ *Подписка активна*\n\n"
+                    f"📅 *Источник:* {source}\n"
+                    f"{expiry_text}"
+                    f"📊 *Использовано сегодня:* {today_downloads}\n\n"
+                    "✨ *Ваши возможности:*\n"
+                    "• ✅ Неограниченное скачивание\n"
+                    "• ✅ Все источники (YouTube, Яндекс.Музыка)\n"
+                    "• ✅ Приоритетная поддержка\n"
+                    "• ✅ Быстрая загрузка\n"
+                )
 
                 conn.close()
                 return True, message
@@ -300,13 +296,13 @@ class Database:
         return (
             "✅ *АДМИНИСТРАТОРСКАЯ ПОДПИСКА*\n\n"
             "⚡ *Вам доступны все функции бота!*\n\n"
+            "🚀 *Статус:* ВЕЧНАЯ АДМИНИСТРАТОРСКАЯ подписка\n\n"
             "✨ *Ваши возможности:*\n"
             "• ✅ Неограниченное скачивание\n"
             "• ✅ Все источники (YouTube, Яндекс.Музыка)\n"
             "• ✅ Приоритетная поддержка\n"
             "• ✅ Быстрая загрузка\n"
-            "• ⚙️ Административные права\n\n"
-            "🚀 *Статус:* ВЕЧНАЯ АДМИНИСТРАТОРСКАЯ подписка"
+            "• ⚙️ Административные права"
         )
 
     def get_user_stats(self, user_id: int) -> Dict[str, Any]:
