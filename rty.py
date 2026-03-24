@@ -2791,38 +2791,38 @@ def send_welcome(message):
 
 @bot.message_handler(commands=['status', 'check'])
 def handle_status(message):
-    """РџРѕРєР°Р·С‹РІР°РµС‚ СЃС‚Р°С‚СѓСЃ РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє СЃРµСЂРІРёСЃР°Рј"""
-    status_text = "рџ“Љ *РЎС‚Р°С‚СѓСЃ РїРѕРґРєР»СЋС‡РµРЅРёР№ Р±РѕС‚Р°*\n\n"
+    """Показывает статус подключения к сервисам."""
+    status_text = "📊 *Статус подключений бота*\n\n"
 
     if ym_client:
         try:
-            account_info = ym_client.me.account_status()
-            status_text += "вњ… *РЇРЅРґРµРєСЃ.РњСѓР·С‹РєР°*: РђРІС‚РѕСЂРёР·РѕРІР°РЅ\n"
-        except:
-            status_text += "вќЊ *РЇРЅРґРµРєСЃ.РњСѓР·С‹РєР°*: РћС€РёР±РєР° Р°РІС‚РѕСЂРёР·Р°С†РёРё\n"
+            ym_client.me.account_status()
+            status_text += "✅ *Яндекс.Музыка*: Авторизован\n"
+        except Exception:
+            status_text += "❌ *Яндекс.Музыка*: Ошибка авторизации\n"
     else:
-        status_text += "вљ пёЏ  *РЇРЅРґРµРєСЃ.РњСѓР·С‹РєР°*: РўРѕРєРµРЅ РЅРµ СѓРєР°Р·Р°РЅ\n"
+        status_text += "⚠️ *Яндекс.Музыка*: Токен не указан\n"
 
-    status_text += "вњ… *YouTube*: РЎРµСЂРІРёСЃ РґРѕСЃС‚СѓРїРµРЅ\n"
+    status_text += "✅ *YouTube*: Сервис доступен\n"
 
     if ENABLE_VK:
         if vk_audio:
-            status_text += "вњ… *VK Music*: РўРµС…РЅРёС‡РµСЃРєРёР№ Р°РєРєР°СѓРЅС‚ РїРѕРґРєР»СЋС‡РµРЅ\n"
+            status_text += "✅ *VK Music*: Технический аккаунт подключен\n"
         else:
-            status_text += "вљ пёЏ  *VK Music*: РќРµ РЅР°СЃС‚СЂРѕРµРЅ\n"
+            status_text += "⚠️ *VK Music*: Не настроен\n"
 
-    status_text += "вњ… *РўРµРєСЃС‚ РїРµСЃРЅРё*: РЇРЅРґРµРєСЃ.РњСѓР·С‹РєР° -> Genius\n"
+    status_text += "✅ *Тексты песен*: Яндекс.Музыка -> Genius\n"
 
     music_files = len(get_folder_files(MUSIC_DIR))
     podcast_files = len(get_folder_files(PODCASTS_DIR))
 
-    status_text += f"\nрџ“Љ *РЎС‚Р°С‚РёСЃС‚РёРєР° С„Р°Р№Р»РѕРІ:*\n"
-    status_text += f"вЂў рџЋµ РњСѓР·С‹РєР°: {music_files} С„Р°Р№Р»РѕРІ\n"
-    status_text += f"вЂў рџЋ™пёЏ РџРѕРґРєР°СЃС‚С‹: {podcast_files} С„Р°Р№Р»РѕРІ\n"
+    status_text += "\n📊 *Статистика файлов:*\n"
+    status_text += f"• 🎵 Музыка: {music_files} файлов\n"
+    status_text += f"• 🎙️ Подкасты: {podcast_files} файлов\n"
 
-    status_text += f"\nрџ“Ѓ *РџСѓС‚Рё Рє РїР°РїРєР°Рј:*\n"
-    status_text += f"вЂў РњСѓР·С‹РєР°: `{os.path.abspath(MUSIC_DIR)}`\n"
-    status_text += f"вЂў РџРѕРґРєР°СЃС‚С‹: `{os.path.abspath(PODCASTS_DIR)}`\n"
+    status_text += "\n📁 *Пути к папкам:*\n"
+    status_text += f"• Музыка: `{os.path.abspath(MUSIC_DIR)}`\n"
+    status_text += f"• Подкасты: `{os.path.abspath(PODCASTS_DIR)}`\n"
 
     bot.reply_to(message, status_text, parse_mode='Markdown')
 
