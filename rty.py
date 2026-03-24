@@ -3112,6 +3112,93 @@ def handle_search_vk(message):
                               reply_markup=keyboard)
 
 
+def parse_yandex_playlist_url(url):
+    if not url or 'music.yandex' not in url:
+        return None
+
+    parsed = urlparse(url.strip())
+    match = re.search(r'/users/([^/]+)/playlists/(\d+)', parsed.path)
+    if match:
+        return match.group(1), match.group(2)
+
+    query_params = parse_qs(parsed.query)
+    owner = (query_params.get('owner') or [None])[0]
+    kind = (query_params.get('kinds') or query_params.get('kind') or [None])[0]
+    if owner and kind:
+        return owner, str(kind)
+    return None
+
+
+def download_yandex_playlist_by_url(url, chat_id, user_id, progress_message_id=None):
+    if not ym_client:
+        return False, "Клиент Яндекс.Музыки не настроен."
+
+    parsed_playlist = parse_yandex_playlist_url(url)
+    if not parsed_playlist:
+        return False, "Не удалось распознать ссылку на плейлист Яндекс.Музыки."
+
+    owner, kind = parsed_playlist
+    try:
+        with ym_client_lock:
+            playlist = ym_client.users_playlists(kind=kind, user_id=owner)
+        if not playlist:
+            return False, "Плейлист не найден."
+        tracks = playlist.fetch_tracks() or []
+    except Exception as e:
+        return False, f"Не удалось загрузить плейлист: {e}"
+
+    total_tracks = len(tracks)
+    downloaded_count = 0
+    failed_count = 0
+
+    for index, item in enumerate(tracks, start=1):
+        track = getattr(item, "track", None)
+        if track is None and hasattr(item, "fetch_track"):
+            try:
+                track = item.fetch_track()
+            except Exception:
+                track = None
+
+        if not track or not getattr(track, "id", None):
+            failed_count += 1
+            continue
+
+        album_id = track.albums[0].id if getattr(track, "albums", None) else int(getattr(item, "album_id", 0) or 0)
+        audio_path, title, performer, status = download_yandex_track_fast(int(track.id), int(album_id or 0))
+        if status == "success" and audio_path:
+            database.increment_download(user_id)
+            file_type = "подкаст" if audio_path.startswith(PODCASTS_DIR) else "музыка"
+            caption = f"🎵 {title} (Яндекс.Музыка) | 📁 {file_type}"
+            if send_audio_fast(
+                chat_id=chat_id,
+                audio_path=audio_path,
+                title=title[:64],
+                performer=performer[:64],
+                caption=caption,
+            ):
+                downloaded_count += 1
+            else:
+                failed_count += 1
+        else:
+            failed_count += 1
+
+        if progress_message_id and (index == 1 or index % 5 == 0 or index == total_tracks):
+            safe_edit_message_text(
+                f"📦 Загружаю плейлист...\n\nОбработано: {index}/{total_tracks}\n"
+                f"Успешно: {downloaded_count}\nОшибок: {failed_count}",
+                chat_id=chat_id,
+                message_id=progress_message_id,
+            )
+
+    playlist_title = getattr(playlist, "title", "Плейлист")
+    return True, (
+        f"✅ Плейлист загружен: {playlist_title}\n\n"
+        f"Всего треков: {total_tracks}\n"
+        f"Успешно отправлено: {downloaded_count}\n"
+        f"Ошибок: {failed_count}"
+    )
+
+
 @bot.message_handler(func=lambda m: m.text and any(x in m.text for x in ['music.yandex', 'youtube.com', 'youtu.be']))
 def handle_music_link(message):
     """РћР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РїСЂСЏРјС‹Рµ СЃСЃС‹Р»РєРё РЅР° РјСѓР·С‹РєСѓ"""
@@ -3135,6 +3222,22 @@ def handle_music_link(message):
 
         if 'music.yandex' in url:
             import re
+            playlist_match = parse_yandex_playlist_url(url)
+            if playlist_match:
+                safe_edit_message_text("📦 Загружаю плейлист Яндекс.Музыки...", chat_id=message.chat.id, message_id=wait_msg.message_id)
+                success, playlist_message = download_yandex_playlist_by_url(
+                    url=url,
+                    chat_id=message.chat.id,
+                    user_id=user_id,
+                    progress_message_id=wait_msg.message_id,
+                )
+                safe_edit_message_text(
+                    playlist_message if success else f"❌ {playlist_message}",
+                    chat_id=message.chat.id,
+                    message_id=wait_msg.message_id,
+                )
+                return
+
             match = re.search(r'music\.yandex\.\w+/album/(\d+)/track/(\d+)', url)
             if match:
                 album_id, track_id = match.groups()
