@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # РњРЈР—Р«РљРђР›Р¬РќР«Р™ Р‘РћРў Р”Р›РЇ TELEGRAM
 # РџРѕР»РЅР°СЏ РёРЅС‚РµРіСЂР°С†РёСЏ: YouTube + РЇРЅРґРµРєСЃ.РњСѓР·С‹РєР°
 # РЎРёСЃС‚РµРјР° РїРѕРґРїРёСЃРѕРє Рё РїСЂРѕРјРѕРєРѕРґРѕРІ
@@ -2356,9 +2356,9 @@ def search_vk_music(query, limit=SEARCH_RESULTS_PER_SOURCE):
 
 
 def download_yandex_track_fast(track_id, album_id, liked_synced=False):
-    """????????? ???? ?? ??????.?????? ? ?????????????????? ?????????? ????."""
+    """Скачивает трек из Яндекс.Музыки и сохраняет его в локальный кэш."""
     if not ym_client:
-        return None, None, None, "?????? ??????.?????? ?? ????????."
+        return None, None, None, "Клиент Яндекс.Музыки не настроен."
 
     try:
         cached_path, cache_item = resolve_cached_yandex_track(track_id, album_id)
@@ -2374,7 +2374,7 @@ def download_yandex_track_fast(track_id, album_id, liked_synced=False):
             tracks = ym_client.tracks([f"{track_id}:{album_id}"])
 
         if not tracks:
-            return None, None, None, "???? ?? ??????."
+            return None, None, None, "Трек не найден."
 
         track = tracks[0]
 
@@ -2382,7 +2382,7 @@ def download_yandex_track_fast(track_id, album_id, liked_synced=False):
             download_info = track.get_download_info()
 
         if not download_info:
-            return None, None, None, "?????????? ??? ?????????? ??????????."
+            return None, None, None, "Недоступна информация для скачивания."
 
         best_info = min(
             [info for info in download_info if info.codec == 'mp3'],
@@ -2393,7 +2393,7 @@ def download_yandex_track_fast(track_id, album_id, liked_synced=False):
         if not best_info:
             best_info = download_info[0] if download_info else None
             if not best_info:
-                return None, None, None, "??? ??????????? ???????."
+                return None, None, None, "Не удалось выбрать поток."
 
         artist_name = track.artists[0].name if track.artists else "Unknown Artist"
         performer = ", ".join(a.name for a in track.artists) if track.artists else "Unknown Artist"
@@ -2435,8 +2435,8 @@ def download_yandex_track_fast(track_id, album_id, liked_synced=False):
         return filepath, track.title, performer, "success"
 
     except Exception as e:
-        print(f"[Yandex] ?????? ??????????: {e}")
-        return None, None, None, f"?????? ??????????: {str(e)}"
+        print(f"[Yandex] Ошибка скачивания: {e}")
+        return None, None, None, f"Ошибка скачивания: {str(e)}"
 
 
 def download_vk_track_fast(owner_id, track_id, track_url=None, title_hint=None, artist_hint=None, duration_seconds=0):
@@ -2496,7 +2496,7 @@ def download_from_youtube_fast(query, is_url=False):
             info = ydl.extract_info(query, download=False)
 
             if not info:
-                return None, None, None, "no_info"
+                return None, None, None, "Не удалось получить информацию о видео."
 
             if 'entries' in info:
                 video = info['entries'][0] if info['entries'] else None
@@ -2504,7 +2504,7 @@ def download_from_youtube_fast(query, is_url=False):
                 video = info
 
             if not video:
-                return None, None, None, "no_video"
+                return None, None, None, "Видео недоступно или не найдено."
 
             title = video.get('title', 'Р‘РµР· РЅР°Р·РІР°РЅРёСЏ')
             uploader = video.get('uploader', 'РќРµРёР·РІРµСЃС‚РЅС‹Р№ Р°РІС‚РѕСЂ')
@@ -2641,9 +2641,9 @@ def universal_search_all(query, limit_per_service=SEARCH_RESULTS_PER_SOURCE):
 
 
 def show_search_results(chat_id, query, results, page=0):
-    """РџРѕРєР°Р·С‹РІР°РµС‚ СЂРµР·СѓР»СЊС‚Р°С‚С‹ РїРѕРёСЃРєР°"""
+    """Показывает результаты поиска."""
     if not results:
-        return "вќЊ РџРѕ РІР°С€РµРјСѓ Р·Р°РїСЂРѕСЃСѓ РЅРёС‡РµРіРѕ РЅРµ РЅР°Р№РґРµРЅРѕ."
+        return "❌ По вашему запросу ничего не найдено."
 
     history = user_search_history.get(chat_id, {})
     original_results = history.get('original_results')
@@ -2661,18 +2661,18 @@ def show_search_results(chat_id, query, results, page=0):
     end_idx = start_idx + 5
     page_results = results[start_idx:end_idx]
 
-    message_text = f"рџ”Ћ *Search results for: '{escape_markdown(query)}'*\n\n"
+    message_text = f"🔎 *Результаты поиска по запросу:* `{escape_markdown(query)}`\n\n"
 
     yandex_count = len([r for r in results if r.get('source') == 'yandex'])
     youtube_count = len([r for r in results if r.get('source') == 'youtube'])
-    source_counts = [f"рџЋµ РЇРЅРґРµРєСЃ: {yandex_count}", f"рџ“є YouTube: {youtube_count}"]
+    source_counts = [f"🎵 Яндекс: {yandex_count}", f"📺 YouTube: {youtube_count}"]
     if ENABLE_VK:
         vk_count = len([r for r in results if r.get('source') == 'vk'])
-        source_counts.append(f"рџЋ§ VK: {vk_count}")
+        source_counts.append(f"🎧 VK: {vk_count}")
 
-    message_text += f"*РќР°Р№РґРµРЅРѕ:* {len(results)} С‚СЂРµРєРѕРІ "
+    message_text += f"*Найдено:* {len(results)} треков "
     message_text += f"({', '.join(source_counts)})\n"
-    message_text += f"*РЎС‚СЂР°РЅРёС†Р°:* {page + 1}/{(len(results) + 4) // 5}\n\n"
+    message_text += f"*Страница:* {page + 1}/{(len(results) + 4) // 5}\n\n"
 
     for track in page_results:
         idx = track.get('global_index', 0)
@@ -2680,32 +2680,32 @@ def show_search_results(chat_id, query, results, page=0):
         source = track.get('source', 'unknown')
 
         if source == 'yandex':
-            source_icon = "рџЋµ"
-            artist_info = escape_markdown(track.get('artists', 'Unknown artist'))
+            source_icon = "🎵"
+            artist_info = escape_markdown(track.get('artists', 'Неизвестный исполнитель'))
         elif source == 'youtube':
-            source_icon = "рџ“є"
-            artist_info = escape_markdown(track.get('artist', 'Unknown channel'))
+            source_icon = "📺"
+            artist_info = escape_markdown(track.get('artist', 'Неизвестный канал'))
         else:
-            source_icon = "рџ”Ќ"
-            artist_info = 'РќРµРёР·РІРµСЃС‚РЅРѕ'
+            source_icon = "🔍"
+            artist_info = 'Неизвестно'
 
         if source == 'vk':
-            source_icon = "рџЋ§"
-            artist_info = escape_markdown(track.get('artist', 'Unknown artist'))
+            source_icon = "🎧"
+            artist_info = escape_markdown(track.get('artist', 'Неизвестный исполнитель'))
 
         message_text += f"{idx}. {source_icon} *{title}*\n"
-        message_text += f"   рџ‘¤ {artist_info}\n"
+        message_text += f"   👤 {artist_info}\n"
 
         duration = track.get('duration', '0:00')
-        message_text += f"   вЏ± {duration}\n\n"
+        message_text += f"   ⏱ {duration}\n\n"
 
-    message_text += "Р’С‹Р±РµСЂРёС‚Рµ С‚СЂРµРє РґР»СЏ СЃРєР°С‡РёРІР°РЅРёСЏ:"
+    message_text += "Выберите трек для скачивания:"
 
     return message_text
 
 
 def create_search_keyboard(results, page=0, results_per_page=5, show_all_button=True):
-    """РЎРѕР·РґР°РµС‚ РёРЅР»Р°Р№РЅ-РєР»Р°РІРёР°С‚СѓСЂСѓ РґР»СЏ СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РїРѕРёСЃРєР°"""
+    """Создает inline-клавиатуру для результатов поиска."""
     markup = types.InlineKeyboardMarkup(row_width=2)
 
     start_idx = page * results_per_page
@@ -2714,18 +2714,18 @@ def create_search_keyboard(results, page=0, results_per_page=5, show_all_button=
 
     for track in page_results:
         idx = track.get('global_index', 0)
-        title = track.get('title', 'РўСЂРµРє')
+        title = track.get('title', 'Трек')
         source = track.get('source', 'unknown')
 
         if source == 'yandex':
-            source_icon = "рџЋµ"
+            source_icon = "🎵"
         elif source == 'youtube':
-            source_icon = "рџ“є"
+            source_icon = "📺"
         else:
-            source_icon = "рџ”Ќ"
+            source_icon = "🔍"
 
         if source == 'vk':
-            source_icon = "рџЋ§"
+            source_icon = "🎧"
 
         btn_text = f"{source_icon} {idx}. {title[:15]}..."
 
@@ -2742,10 +2742,10 @@ def create_search_keyboard(results, page=0, results_per_page=5, show_all_button=
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(types.InlineKeyboardButton("в—ЂпёЏ РќР°Р·Р°Рґ", callback_data=f"page_{page - 1}"))
+        nav_buttons.append(types.InlineKeyboardButton("◀️ Назад", callback_data=f"page_{page - 1}"))
 
     if end_idx < len(results):
-        nav_buttons.append(types.InlineKeyboardButton("Р’РїРµСЂРµРґ в–¶пёЏ", callback_data=f"page_{page + 1}"))
+        nav_buttons.append(types.InlineKeyboardButton("Вперед ▶️", callback_data=f"page_{page + 1}"))
 
     if nav_buttons:
         markup.add(*nav_buttons)
@@ -3205,7 +3205,7 @@ def handle_admin_stats(message):
 # РћРЎРќРћР’РќР«Р• РљРћРњРђРќР”Р« Р‘РћРўРђ
 # ============================================
 
-@bot.message_handler(commands=['clear_cache', 'clear'])
+@bot.message_handler(commands=['__legacy_clear_cache__'])
 def handle_clear_cache(message):
     """РћС‡РёС‰Р°РµС‚ РєСЌС€ С„Р°Р№Р»РѕРІ"""
     markup = types.InlineKeyboardMarkup(row_width=2)
@@ -3222,6 +3222,27 @@ def handle_clear_cache(message):
                  "вљЎ *Р­С‚Рѕ РґРµР№СЃС‚РІРёРµ РЅРµР»СЊР·СЏ РѕС‚РјРµРЅРёС‚СЊ!*",
                  parse_mode='Markdown',
                  reply_markup=markup)
+
+
+@bot.message_handler(commands=['clear_cache', 'clear'])
+def handle_clear_cache_clean(message):
+    """Очищает кэш файлов."""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("✅ Да, очистить всё", callback_data="clear_cache_confirm"),
+        types.InlineKeyboardButton("❌ Нет, отменить", callback_data="clear_cache_cancel")
+    )
+    bot.reply_to(
+        message,
+        "⚠️ *Внимание!*\n\n"
+        "Вы уверены, что хотите удалить ВСЕ файлы из кэша?\n\n"
+        "🗑️ *Будет удалено:*\n"
+        "• Все скачанные треки\n"
+        "• Все подкасты\n\n"
+        "⚡ *Это действие нельзя отменить!*",
+        parse_mode='Markdown',
+        reply_markup=markup
+    )
 
 
 @bot.message_handler(commands=['search_all', 'search'])
@@ -3248,17 +3269,18 @@ def handle_search_yandex(message):
     query = message.text.replace('/search_yandex', '').strip()
 
     if not query:
-        bot.reply_to(message, "рџ“ќ РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: `/search_yandex <Р·Р°РїСЂРѕСЃ>`", parse_mode='Markdown')
+        bot.reply_to(message, "📝 Использование: `/search_yandex <запрос>`", parse_mode='Markdown')
         return
 
-    wait_msg = bot.reply_to(message, f"рџЋµ РС‰Сѓ '{query}' РІ РЇРЅРґРµРєСЃ.РњСѓР·С‹РєРµ...")
+    wait_msg = bot.reply_to(message, f"🎵 Ищу `{escape_markdown(query)}` в Яндекс.Музыке...", parse_mode='Markdown')
 
     results = search_yandex_music(query, limit=SEARCH_RESULTS_PER_SOURCE)
 
     if not results:
-        bot.edit_message_text(f"вќЊ РџРѕ Р·Р°РїСЂРѕСЃСѓ '{query}' РЅРёС‡РµРіРѕ РЅРµ РЅР°Р№РґРµРЅРѕ.",
+        bot.edit_message_text(f"❌ По запросу `{escape_markdown(query)}` ничего не найдено.",
                               chat_id=message.chat.id,
-                              message_id=wait_msg.message_id)
+                              message_id=wait_msg.message_id,
+                              parse_mode='Markdown')
         return
 
     message_text = show_search_results(message.chat.id, query, results, page=0)
@@ -3271,8 +3293,8 @@ def handle_search_yandex(message):
                               parse_mode='Markdown',
                               reply_markup=keyboard)
     except Exception as e:
-        print(f"[!] РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ: {e}")
-        bot.edit_message_text(f"вњ… РќР°Р№РґРµРЅРѕ {len(results)} СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ РєРЅРѕРїРєРё РЅРёР¶Рµ РґР»СЏ РІС‹Р±РѕСЂР°.",
+        print(f"[!] Ошибка отправки результатов Яндекса: {e}")
+        bot.edit_message_text(f"✅ Найдено {len(results)} результатов. Используйте кнопки ниже для выбора.",
                               chat_id=message.chat.id,
                               message_id=wait_msg.message_id,
                               reply_markup=keyboard)
@@ -3288,17 +3310,18 @@ def handle_search_youtube(message):
     query = message.text.replace('/search_youtube', '').replace('/youtube', '').strip()
 
     if not query:
-        bot.reply_to(message, "рџ“ќ РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: `/search_youtube <Р·Р°РїСЂРѕСЃ>`", parse_mode='Markdown')
+        bot.reply_to(message, "📝 Использование: `/search_youtube <запрос>`", parse_mode='Markdown')
         return
 
-    wait_msg = bot.reply_to(message, f"рџ“є РС‰Сѓ '{query}' РЅР° YouTube...")
+    wait_msg = bot.reply_to(message, f"📺 Ищу `{escape_markdown(query)}` на YouTube...", parse_mode='Markdown')
 
     results = search_youtube_music(query, limit=SEARCH_RESULTS_PER_SOURCE)
 
     if not results:
-        bot.edit_message_text(f"вќЊ РџРѕ Р·Р°РїСЂРѕСЃСѓ '{query}' РЅРёС‡РµРіРѕ РЅРµ РЅР°Р№РґРµРЅРѕ РЅР° YouTube.",
+        bot.edit_message_text(f"❌ По запросу `{escape_markdown(query)}` ничего не найдено на YouTube.",
                               chat_id=message.chat.id,
-                              message_id=wait_msg.message_id)
+                              message_id=wait_msg.message_id,
+                              parse_mode='Markdown')
         return
 
     message_text = show_search_results(message.chat.id, query, results, page=0)
@@ -3311,8 +3334,8 @@ def handle_search_youtube(message):
                               parse_mode='Markdown',
                               reply_markup=keyboard)
     except Exception as e:
-        print(f"[!] РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ: {e}")
-        bot.edit_message_text(f"вњ… РќР°Р№РґРµРЅРѕ {len(results)} СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ РєРЅРѕРїРєРё РЅРёР¶Рµ РґР»СЏ РІС‹Р±РѕСЂР°.",
+        print(f"[!] Ошибка отправки результатов YouTube: {e}")
+        bot.edit_message_text(f"✅ Найдено {len(results)} результатов. Используйте кнопки ниже для выбора.",
                               chat_id=message.chat.id,
                               message_id=wait_msg.message_id,
                               reply_markup=keyboard)
@@ -3326,7 +3349,7 @@ def handle_search_youtube(message):
 def handle_search_vk(message):
     """Handles a search request in VK Music."""
     if not ENABLE_VK:
-        bot.reply_to(message, "VK-РїРѕРёСЃРє РѕС‚РєР»СЋС‡РµРЅ РІ СЌС‚РѕР№ РІРµСЂСЃРёРё Р±РѕС‚Р°.")
+        bot.reply_to(message, "VK-поиск отключен в этой версии бота.")
         return
 
     if not vk_audio:
@@ -3340,16 +3363,17 @@ def handle_search_vk(message):
     query = message.text.replace('/search_vk', '').replace('/vk', '').strip()
 
     if not query:
-        bot.reply_to(message, "рџ“ќ РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: `/search_vk <Р·Р°РїСЂРѕСЃ>`", parse_mode='Markdown')
+        bot.reply_to(message, "📝 Использование: `/search_vk <запрос>`", parse_mode='Markdown')
         return
 
-    wait_msg = bot.reply_to(message, f"рџЋ§ РС‰Сѓ '{query}' РІ VK Music...")
+    wait_msg = bot.reply_to(message, f"🎧 Ищу `{escape_markdown(query)}` в VK Music...", parse_mode='Markdown')
     results = search_vk_music(query, limit=SEARCH_RESULTS_PER_SOURCE)
 
     if not results:
-        bot.edit_message_text(f"вќЊ РџРѕ Р·Р°РїСЂРѕСЃСѓ '{query}' РЅРёС‡РµРіРѕ РЅРµ РЅР°Р№РґРµРЅРѕ РІ VK Music.",
+        bot.edit_message_text(f"❌ По запросу `{escape_markdown(query)}` ничего не найдено в VK Music.",
                               chat_id=message.chat.id,
-                              message_id=wait_msg.message_id)
+                              message_id=wait_msg.message_id,
+                              parse_mode='Markdown')
         return
 
     message_text = show_search_results(message.chat.id, query, results, page=0)
@@ -3362,8 +3386,8 @@ def handle_search_vk(message):
                               parse_mode='Markdown',
                               reply_markup=keyboard)
     except Exception as e:
-        print(f"[!] РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё VK СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ: {e}")
-        bot.edit_message_text(f"вњ… РќР°Р№РґРµРЅРѕ {len(results)} СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ РєРЅРѕРїРєРё РЅРёР¶Рµ РґР»СЏ РІС‹Р±РѕСЂР°.",
+        print(f"[!] Ошибка отправки результатов VK: {e}")
+        bot.edit_message_text(f"✅ Найдено {len(results)} результатов. Используйте кнопки ниже для выбора.",
                               chat_id=message.chat.id,
                               message_id=wait_msg.message_id,
                               reply_markup=keyboard)
@@ -3458,30 +3482,35 @@ def download_yandex_playlist_by_url(url, chat_id, user_id, progress_message_id=N
 
 @bot.message_handler(func=lambda m: m.text and any(x in m.text for x in ['music.yandex', 'youtube.com', 'youtu.be']))
 def handle_music_link(message):
-    """РћР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РїСЂСЏРјС‹Рµ СЃСЃС‹Р»РєРё РЅР° РјСѓР·С‹РєСѓ"""
+    """Обрабатывает прямые ссылки на музыку."""
     try:
-        # РџСЂРѕРІРµСЂРєР° РґРѕСЃС‚СѓРїР°
         user_id = message.from_user.id
         has_access, msg = database.check_subscription(user_id)
         if not has_access:
-            bot.reply_to(message,
-                         f"рџљ« *Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰РµРЅ!*\n\n"
-                         f"{msg}\n\n"
-                         f"рџ’Ў Р”Р»СЏ РґРѕСЃС‚СѓРїР° Рє СЃРєР°С‡РёРІР°РЅРёСЋ:\n"
-                         f"вЂў РСЃРїРѕР»СЊР·СѓР№С‚Рµ РєРѕРјР°РЅРґСѓ /subscribe\n"
-                         f"вЂў РђРєС‚РёРІРёСЂСѓР№С‚Рµ РїСЂРѕРјРѕРєРѕРґ /promo РљРћР”\n"
-                         f"вЂў РћР±СЂР°С‚РёС‚РµСЃСЊ Рє Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂСѓ",
-                         parse_mode='Markdown')
+            bot.reply_to(
+                message,
+                f"🚫 *Доступ запрещен!*\n\n{msg}\n\n"
+                "💡 *Для доступа к скачиванию:*\n"
+                "• Используйте /subscribe\n"
+                "• Активируйте промокод: /promo КОД\n"
+                "• При необходимости напишите администратору",
+                parse_mode='Markdown'
+            )
             return
 
-        wait_msg = bot.reply_to(message, "рџ”— РђРЅР°Р»РёР·РёСЂСѓСЋ СЃСЃС‹Р»РєСѓ...")
+        wait_msg = bot.reply_to(message, "🔗 Анализирую ссылку...")
         url = message.text.strip()
 
         if 'music.yandex' in url:
             import re
+
             playlist_match = parse_yandex_playlist_url(url)
             if playlist_match:
-                safe_edit_message_text("📦 Загружаю плейлист Яндекс.Музыки...", chat_id=message.chat.id, message_id=wait_msg.message_id)
+                safe_edit_message_text(
+                    "📥 Загружаю плейлист Яндекс.Музыки...",
+                    chat_id=message.chat.id,
+                    message_id=wait_msg.message_id,
+                )
                 success, playlist_message = download_yandex_playlist_by_url(
                     url=url,
                     chat_id=message.chat.id,
@@ -3500,75 +3529,79 @@ def handle_music_link(message):
                 album_id, track_id = match.groups()
                 audio_path, title, performer, status = download_yandex_track_fast(int(track_id), int(album_id))
                 if status == "success" and audio_path:
-                    # РЈРІРµР»РёС‡РёРІР°РµРј СЃС‡РµС‚С‡РёРє СЃРєР°С‡РёРІР°РЅРёР№
                     database.increment_download(user_id)
-
-                    file_type = "РїРѕРґРєР°СЃС‚" if audio_path.startswith(PODCASTS_DIR) else "РјСѓР·С‹РєР°"
-                    caption = f"рџЋµ {title} (РЇРЅРґРµРєСЃ.РњСѓР·С‹РєР°) | рџ“Ѓ {file_type}"
-
+                    file_type = "подкаст" if audio_path.startswith(PODCASTS_DIR) else "музыка"
+                    caption = f"🎵 {title} (Яндекс.Музыка) | 📁 {file_type}"
                     success = send_audio_fast(
                         chat_id=message.chat.id,
                         audio_path=audio_path,
                         title=title[:64],
                         performer=performer[:64],
-                        caption=caption
+                        caption=caption,
                     )
-
                     if success:
                         bot.delete_message(message.chat.id, wait_msg.message_id)
                     else:
-                        bot.edit_message_text("вќЊ РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ Р°СѓРґРёРѕ.",
-                                              chat_id=message.chat.id,
-                                              message_id=wait_msg.message_id)
+                        bot.edit_message_text(
+                            "❌ Не удалось отправить аудио.",
+                            chat_id=message.chat.id,
+                            message_id=wait_msg.message_id,
+                        )
                     return
-            bot.edit_message_text(f"вќЊ РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ РЇРЅРґРµРєСЃ-СЃСЃС‹Р»РєСѓ",
-                                  chat_id=message.chat.id,
-                                  message_id=wait_msg.message_id)
 
-        elif 'youtube.com' in url or 'youtu.be' in url:
-            bot.edit_message_text("рџ“Ґ РЎРєР°С‡РёРІР°СЋ СЃ YouTube...",
-                                  chat_id=message.chat.id,
-                                  message_id=wait_msg.message_id)
+            bot.edit_message_text(
+                "❌ Не удалось обработать ссылку Яндекс.Музыки.",
+                chat_id=message.chat.id,
+                message_id=wait_msg.message_id,
+            )
+            return
 
+        if 'youtube.com' in url or 'youtu.be' in url:
+            bot.edit_message_text(
+                "📥 Скачиваю с YouTube...",
+                chat_id=message.chat.id,
+                message_id=wait_msg.message_id,
+            )
             audio_path, title, performer, status = download_from_youtube_fast(url, is_url=True)
-
             if status == "success" and audio_path:
-                # РЈРІРµР»РёС‡РёРІР°РµРј СЃС‡РµС‚С‡РёРє СЃРєР°С‡РёРІР°РЅРёР№
                 database.increment_download(user_id)
-
-                file_type = "РїРѕРґРєР°СЃС‚" if audio_path.startswith(PODCASTS_DIR) else "РјСѓР·С‹РєР°"
-                caption = f"рџЋµ {title} (YouTube) | рџ“Ѓ {file_type}"
-
+                file_type = "подкаст" if audio_path.startswith(PODCASTS_DIR) else "музыка"
+                caption = f"🎵 {title} (YouTube) | 📁 {file_type}"
                 success = send_audio_fast(
                     chat_id=message.chat.id,
                     audio_path=audio_path,
                     title=title[:64],
                     performer=performer[:64],
-                    caption=caption
+                    caption=caption,
                 )
-
                 if success:
                     bot.delete_message(message.chat.id, wait_msg.message_id)
                 else:
-                    bot.edit_message_text("вќЊ РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ Р°СѓРґРёРѕ.",
-                                          chat_id=message.chat.id,
-                                          message_id=wait_msg.message_id)
+                    bot.edit_message_text(
+                        "❌ Не удалось отправить аудио.",
+                        chat_id=message.chat.id,
+                        message_id=wait_msg.message_id,
+                    )
                 return
-            else:
-                error_msg = "вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё"
-                bot.edit_message_text(f"{error_msg}: {status}",
-                                      chat_id=message.chat.id,
-                                      message_id=wait_msg.message_id)
-        else:
-            bot.edit_message_text(f"вќЊ Р¤РѕСЂРјР°С‚ СЃСЃС‹Р»РєРё РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ",
-                                  chat_id=message.chat.id,
-                                  message_id=wait_msg.message_id)
+
+            bot.edit_message_text(
+                f"❌ Ошибка загрузки: {status}",
+                chat_id=message.chat.id,
+                message_id=wait_msg.message_id,
+            )
+            return
+
+        bot.edit_message_text(
+            "❌ Формат ссылки не поддерживается.",
+            chat_id=message.chat.id,
+            message_id=wait_msg.message_id,
+        )
     except Exception as e:
-        print(f"[!] РћС€РёР±РєР° РІ РѕР±СЂР°Р±РѕС‚С‡РёРєРµ СЃСЃС‹Р»РєРё: {e}")
+        print(f"[!] Ошибка в обработчике ссылки: {e}")
         traceback.print_exc()
         try:
-            bot.reply_to(message, f"вќЊ РћС€РёР±РєР°: {str(e)[:100]}")
-        except:
+            bot.reply_to(message, f"❌ Ошибка: {str(e)[:100]}")
+        except Exception:
             pass
 
 
@@ -3982,6 +4015,57 @@ def handle_callback(call):
 
         elif data == "back_to_menu":
             send_welcome(call.message)
+            return
+
+        elif data == "clear_cache":
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                types.InlineKeyboardButton("✅ Да, очистить всё", callback_data="clear_cache_confirm_clean"),
+                types.InlineKeyboardButton("❌ Нет, отменить", callback_data="clear_cache_cancel_clean")
+            )
+            try:
+                safe_edit_message_text(
+                    "⚠️ *Внимание!*\n\n"
+                    "Вы уверены, что хотите удалить ВСЕ файлы из кэша?\n\n"
+                    "🗑️ *Будет удалено:*\n"
+                    "• Все скачанные треки\n"
+                    "• Все подкасты\n\n"
+                    "⚡ *Это действие нельзя отменить!*",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    parse_mode='Markdown',
+                    reply_markup=markup
+                )
+            except Exception as e:
+                print(f"[ERROR] Failed to show clear_cache dialog: {e}")
+            return
+
+        elif data == "clear_cache_confirm_clean":
+            deleted_count = clear_cache_folders()
+            try:
+                safe_edit_message_text(
+                    f"✅ *Кэш очищен!*\n\n"
+                    f"🗑️ Удалено файлов: *{deleted_count}*\n\n"
+                    "Готово. Освобождено место под новые загрузки.",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                print(f"[ERROR] Failed to show clear_cache result: {e}")
+            return
+
+        elif data == "clear_cache_cancel_clean":
+            try:
+                safe_edit_message_text(
+                    "❌ *Очистка кэша отменена.*\n\n"
+                    "Файлы не были удалены.",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                print(f"[ERROR] Failed to show clear_cache cancel: {e}")
             return
 
         elif data == "clear_cache":
@@ -4552,23 +4636,23 @@ def handle_callback(call):
 
                 if folder_type == "music":
                     folder_path = MUSIC_DIR
-                    folder_name = "РњСѓР·С‹РєР°"
-                    emoji = "рџЋµ"
+                    folder_name = "Музыка"
+                    emoji = "🎵"
                 else:
                     folder_path = PODCASTS_DIR
-                    folder_name = "РџРѕРґРєР°СЃС‚С‹"
-                    emoji = "рџЋ™пёЏ"
+                    folder_name = "Подкасты"
+                    emoji = "🎙️"
 
                 files = get_folder_files(folder_path)
 
                 if not files:
                     safe_edit_message_text(
-                        f"{emoji} *РџР°РїРєР° СЃ {folder_name.lower()}*\n\n"
-                        f"рџ“­ РџР°РїРєР° РїСѓСЃС‚Р°\n\n"
-                        f"рџ’Ў *РЎРѕРІРµС‚:*\n"
-                        f"вЂў РћС‚РїСЂР°РІСЊС‚Рµ РЅР°Р·РІР°РЅРёРµ РїРµСЃРЅРё РІ С‡Р°С‚\n"
-                        f"вЂў РЎРєР°С‡Р°Р№С‚Рµ С‚СЂРµРєРё РёР· РїРѕРёСЃРєР°\n"
-                        f"вЂў Р¤Р°Р№Р»С‹ РїРѕСЏРІСЏС‚СЃСЏ Р·РґРµСЃСЊ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё",
+                        f"{emoji} *Папка с {folder_name.lower()}*\n\n"
+                        f"📭 Папка пуста\n\n"
+                        f"💡 *Совет:*\n"
+                        f"• Отправьте название песни в чат\n"
+                        f"• Скачайте треки из поиска\n"
+                        f"• Файлы появятся здесь автоматически",
                         chat_id=chat_id,
                         message_id=message_id,
                         parse_mode='Markdown'
@@ -4577,11 +4661,11 @@ def handle_callback(call):
 
                 total_size = sum(f['size'] for f in files)
                 message_text = (
-                    f"{emoji} *РџР°РїРєР° СЃ {folder_name.lower()}*\n\n"
-                    f"рџ“Љ *РЎС‚Р°С‚РёСЃС‚РёРєР°:*\n"
-                    f"вЂў Р¤Р°Р№Р»РѕРІ: {len(files)}\n"
-                    f"вЂў РћР±С‰РёР№ СЂР°Р·РјРµСЂ: {total_size:.2f} MB\n\n"
-                    f"рџ“Ѓ Р’С‹Р±РµСЂРёС‚Рµ С„Р°Р№Р» РґР»СЏ РѕС‚РїСЂР°РІРєРё:"
+                    f"{emoji} *Папка с {folder_name.lower()}*\n\n"
+                    f"📊 *Статистика:*\n"
+                    f"• Файлов: {len(files)}\n"
+                    f"• Общий размер: {total_size:.2f} MB\n\n"
+                    f"📁 Выберите файл для отправки:"
                 )
 
                 keyboard = create_files_keyboard(files, page=page, folder_type=folder_type)
@@ -4617,13 +4701,13 @@ def handle_callback(call):
                     success = send_file_from_folder(chat_id, file_path)
 
                     if not success:
-                        bot.answer_callback_query(call.id, "вќЊ РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё С„Р°Р№Р»Р°")
+                        bot.answer_callback_query(call.id, "❌ Ошибка отправки файла")
 
     except Exception as e:
-        print(f"[!] РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР° РІ РѕР±СЂР°Р±РѕС‚С‡РёРєРµ callback: {e}")
+        print(f"[!] Критическая ошибка в обработчике callback: {e}")
         traceback.print_exc()
         try:
-            bot.answer_callback_query(call.id, f"вќЊ РћС€РёР±РєР°: {str(e)[:50]}")
+            bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)[:50]}")
         except:
             pass
 
