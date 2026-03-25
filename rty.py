@@ -23,6 +23,8 @@ from config import (
     DATA_DIR,
     SEARCH_RESULTS_PER_SOURCE,
     MINI_APP_URL,
+    MINI_APP_SHARED_SECRET,
+    INTERNAL_API_PORT,
 )
 import telebot
 import os
@@ -35,6 +37,7 @@ import concurrent.futures
 import requests
 import json
 import shutil
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dotenv import load_dotenv
 from urllib.parse import urlparse, parse_qs, quote, unquote, urlencode, urlunparse
 from yandex_music import Client
@@ -134,6 +137,7 @@ yandex_cache_index_lock = threading.RLock()
 chat_library_index_lock = threading.RLock()
 liked_sync_state_lock = threading.Lock()
 active_liked_sync_users = set()
+internal_api_server = None
 
 # --- РќРђРЎРўР РћР™РљР РџРђРџРћРљ ---
 AUDIO_CACHE_DIR = str(CACHE_DIR)
@@ -1662,6 +1666,118 @@ def safe_edit_message_text(text, chat_id, message_id, **kwargs):
         if "message is not modified" in error_text:
             return None
         raise
+
+
+def get_internal_access_status(user_id):
+    if user_id in ADMIN_IDS:
+        return {
+            "access_type": "admin",
+            "source": "admin",
+            "promo_code": None,
+            "expires_at": None,
+            "label": "Права администратора",
+        }
+
+    has_access, _ = database.check_subscription(user_id)
+    if not has_access:
+        return {
+            "access_type": "free",
+            "source": "none",
+            "promo_code": None,
+            "expires_at": None,
+            "label": "Доступ не активирован",
+        }
+
+    stats = database.get_user_stats(user_id) or {}
+    current_subscription = stats.get('current_subscription') or {}
+    return {
+        "access_type": "premium",
+        "source": "promo" if current_subscription.get('is_promo') else "subscription",
+        "promo_code": current_subscription.get('promo_code'),
+        "expires_at": current_subscription.get('expiry_date'),
+        "label": "Подписка активна",
+    }
+
+
+class MiniAppBridgeHandler(BaseHTTPRequestHandler):
+    server_version = "MiniAppBridge/1.0"
+
+    def log_message(self, format, *args):
+        return
+
+    def _send_json(self, payload, status=200):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authorize(self):
+        return bool(MINI_APP_SHARED_SECRET) and self.headers.get("X-Mini-App-Secret", "").strip() == MINI_APP_SHARED_SECRET
+
+    def do_GET(self):
+        if not self._authorize():
+            return self._send_json({"ok": False, "message": "Forbidden"}, status=403)
+
+        parsed = urlparse(self.path)
+        if parsed.path != "/internal/access/status":
+            return self._send_json({"ok": False, "message": "Not found"}, status=404)
+
+        query = parse_qs(parsed.query)
+        try:
+            user_id = int((query.get("telegram_user_id") or ["0"])[0])
+        except (TypeError, ValueError):
+            user_id = 0
+        return self._send_json({"ok": True, "status": get_internal_access_status(user_id)})
+
+    def do_POST(self):
+        if not self._authorize():
+            return self._send_json({"ok": False, "message": "Forbidden"}, status=403)
+
+        if self.path != "/internal/access/promo":
+            return self._send_json({"ok": False, "message": "Not found"}, status=404)
+
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            content_length = 0
+        raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+
+        try:
+            payload = json.loads(raw_body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            return self._send_json({"ok": False, "message": "Bad JSON"}, status=400)
+
+        try:
+            user_id = int(payload.get("telegram_user_id") or 0)
+        except (TypeError, ValueError):
+            user_id = 0
+        code = str(payload.get("code") or "").strip()
+        if not user_id or not code:
+            return self._send_json({"ok": False, "message": "Неверные данные для активации."}, status=400)
+
+        result = database.use_promo_code(user_id, code)
+        response = {
+            "ok": bool(result.get("success")),
+            "message": result.get("message") or "Промокод не активирован.",
+            "status": get_internal_access_status(user_id),
+        }
+        return self._send_json(response, status=200 if response["ok"] else 400)
+
+
+def start_internal_api_server():
+    global internal_api_server
+    if not MINI_APP_SHARED_SECRET:
+        print("[MiniApp Bridge] Shared secret is not configured. Internal API disabled.")
+        return
+    try:
+        internal_api_server = ThreadingHTTPServer(("0.0.0.0", INTERNAL_API_PORT), MiniAppBridgeHandler)
+        thread = threading.Thread(target=internal_api_server.serve_forever, daemon=True)
+        thread.start()
+        print(f"[MiniApp Bridge] Internal API is listening on 0.0.0.0:{INTERNAL_API_PORT}")
+    except Exception as e:
+        print(f"[MiniApp Bridge] Failed to start internal API: {e}")
 
 
 def is_menu_button_text(text):
@@ -4517,6 +4633,7 @@ def handle_callback(call):
 # ============================================
 
 if __name__ == '__main__':
+    start_internal_api_server()
     print("=" * 60)
     print("🤖 ТЕЛЕГРАМ-МУЗЫКАЛЬНЫЙ БОТ ЗАПУЩЕН!")
     print("=" * 60)

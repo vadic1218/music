@@ -30,6 +30,9 @@ ENABLE_VK = os.environ.get('ENABLE_VK', '').strip().lower() in {'1', 'true', 'ye
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '').strip()
 OPENAI_TRANSCRIBE_MODEL = os.environ.get('OPENAI_TRANSCRIBE_MODEL', 'gpt-4o-mini-transcribe').strip()
 MINI_APP_URL = os.environ.get('MINI_APP_URL', '').strip()
+WEBHOOK_BASE_URL = os.environ.get('WEBHOOK_BASE_URL', '').strip()
+MINI_APP_SHARED_SECRET = os.environ.get('MINI_APP_SHARED_SECRET', '').strip()
+INTERNAL_API_PORT = int(os.environ.get('INTERNAL_API_PORT', os.environ.get('PORT', '8080')))
 
 DATA_DIR = Path(os.environ.get('DATA_DIR', BASE_DIR / 'data')).expanduser()
 CACHE_DIR = Path(os.environ.get('CACHE_DIR', BASE_DIR / 'audio_cache')).expanduser()
