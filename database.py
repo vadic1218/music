@@ -228,6 +228,11 @@ class Database:
                 result = cursor.fetchone()
 
                 if not result:
+                    recovery = self._recover_subscription_from_promo_usage(cursor, user_id)
+                    if recovery:
+                        conn.commit()
+                        conn.close()
+                        return self.check_subscription(user_id)
                     conn.close()
                     return False, "🚫 *У вас нет активной подписки*\n\nИспользуйте /subscribe для оформления доступа"
 
@@ -290,6 +295,65 @@ class Database:
         except Exception as e:
             print(f"[DATABASE] Ошибка проверки подписки: {e}")
             return False, "⚠️ Ошибка проверки подписки"
+
+    def _recover_subscription_from_promo_usage(self, cursor, user_id: int) -> bool:
+        cursor.execute(
+            '''
+            SELECT promo_code, subscription_type, used_at
+            FROM promo_usage
+            WHERE user_id = ?
+            ORDER BY used_at DESC
+            LIMIT 1
+            ''',
+            (user_id,),
+        )
+        promo_usage = cursor.fetchone()
+        if not promo_usage:
+            return False
+
+        promo_code = promo_usage['promo_code']
+        subscription_type = promo_usage['subscription_type'] or 'premium'
+        used_at = promo_usage['used_at']
+
+        expiry_date = None
+        if promo_code != 'V1_GAN13':
+            try:
+                used_at_obj = datetime.strptime(used_at, '%Y-%m-%d %H:%M:%S')
+            except Exception:
+                return False
+            expiry_obj = used_at_obj + timedelta(days=30)
+            if expiry_obj <= datetime.now():
+                return False
+            expiry_date = expiry_obj.strftime('%Y-%m-%d %H:%M:%S')
+
+        cursor.execute(
+            '''
+            INSERT OR IGNORE INTO users (
+                user_id, username, first_name, last_name, language_code, is_premium, last_seen, total_downloads
+            )
+            VALUES (?, NULL, NULL, NULL, NULL, 0, CURRENT_TIMESTAMP, 0)
+            ''',
+            (user_id,),
+        )
+        cursor.execute(
+            '''
+            INSERT INTO subscriptions (
+                user_id, subscription_type, status, start_date, expiry_date,
+                is_promo, promo_code, payment_method, transaction_id
+            )
+            VALUES (?, ?, 'active', ?, ?, 1, ?, 'promo_recovery', ?)
+            ''',
+            (
+                user_id,
+                subscription_type,
+                used_at,
+                expiry_date,
+                promo_code,
+                f"RECOVERED_{promo_code}_{user_id}",
+            ),
+        )
+        print(f"[DATABASE] Recovered active subscription for user {user_id} from promo usage {promo_code}")
+        return True
 
     def _get_admin_subscription_message(self):
         """Сообщение о подписке для администраторов"""
@@ -589,6 +653,16 @@ class Database:
                 ''', (user_id,))
 
                 start_date_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+                cursor.execute(
+                    '''
+                    INSERT OR IGNORE INTO users (
+                        user_id, username, first_name, last_name, language_code, is_premium, last_seen, total_downloads
+                    )
+                    VALUES (?, NULL, NULL, NULL, NULL, 0, CURRENT_TIMESTAMP, 0)
+                    ''',
+                    (user_id,),
+                )
 
                 # Вставляем новую подписку
                 cursor.execute('''
